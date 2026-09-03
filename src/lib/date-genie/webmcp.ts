@@ -125,19 +125,19 @@ export function buildTools(h: WebMcpHandlers): ToolDescriptor[] {
         "restaurantId",
         "time",
       ]),
-      execute: wrap("reserve_table", (a) => reserveTable({ party: 2, ...(a as never) })),
+      execute: wrap("reserve_table", (a) => reserveTable({ party: 2, ...(a as unknown as { restaurantId: string; time: string }) })),
     },
     {
       name: "reserve_tickets",
       description: "Reserve event tickets. Side effect: creates a real booking.",
       inputSchema: obj({ eventId: str("id"), quantity: num("Ticket count") }, ["eventId"]),
-      execute: wrap("reserve_tickets", (a) => reserveTickets({ quantity: 2, ...(a as never) })),
+      execute: wrap("reserve_tickets", (a) => reserveTickets({ quantity: 2, ...(a as unknown as { eventId: string }) })),
     },
     {
       name: "reserve_spot",
       description: "Reserve a parking spot for the evening.",
       inputSchema: obj({ parkingId: str("id"), arriveBy: str("24h HH:MM") }, ["parkingId"]),
-      execute: wrap("reserve_spot", (a) => reserveSpot({ arriveBy: "19:00", ...(a as never) })),
+      execute: wrap("reserve_spot", (a) => reserveSpot({ arriveBy: "19:00", ...(a as unknown as { parkingId: string }) })),
     },
     {
       name: "book_current_plan",
