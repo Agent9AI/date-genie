@@ -13,8 +13,12 @@
  * Deliberately framework-free (a small observable) so the tool layer never
  * imports React and can be lifted into any site.
  */
+import type { Shortfall } from "./engine";
 import {
   DEFAULT_CONSTRAINTS,
+  activityInterests,
+  cuisineInterests,
+  diagnose,
   planWithRelaxation,
   type Booking,
   type CheckRow,
@@ -60,6 +64,8 @@ export type State = {
   trace: string[];
   considered: number;
   relaxations: Relaxation[];
+  /** Why there is no plan, and what would fix it. */
+  shortfall: Shortfall | null;
   calls: ToolCall[];
   approval: ApprovalState;
   booking: Booking | null;
@@ -106,6 +112,7 @@ let state: State = {
   trace: [],
   considered: 0,
   relaxations: [],
+  shortfall: null,
   calls: [],
   approval: { status: "idle" },
   booking: null,
@@ -214,17 +221,26 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
   const merged: Constraints = { ...c, avoid: [...new Set([...c.avoid, ...state.vetoes])] };
   set({ searching: true, constraints: merged, notice: null });
 
+  // A cuisine filter and an activity filter are different queries against
+  // different amenities. Mixing them asks for restaurants that serve cinema.
+  const cuisine = cuisineInterests(merged)[0];
+  const activity = activityInterests(merged)[0];
+
   const pool = await searchWithWidening({
     at: place.at,
-    radiusKm: 5,
+    radiusKm: 4,
     restaurants: {
-      ...(merged.interests.length ? { cuisine: merged.interests[0]! } : {}),
+      ...(cuisine ? { cuisine } : {}),
       dietary: merged.dietary,
       avoid: merged.avoid,
       earliest: merged.earliest,
       party: merged.party,
     },
-    events: { earliest: merged.earliest, latestEnd: merged.latestEnd },
+    events: {
+      ...(activity ? { category: activity } : {}),
+      earliest: merged.earliest,
+      latestEnd: merged.latestEnd,
+    },
   });
 
   if (pool.dropped.length) {
@@ -238,13 +254,52 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
       plan: null,
       alternates: [],
       checks: [],
-      notice: `No restaurants came back for ${place.label}. The sources may be rate limited, or the area may genuinely be thin. Try again, or widen the search by naming a nearby larger town.`,
+      notice: `No restaurants came back for ${place.label}${
+        cuisine ? ` matching "${cuisine}"` : ""
+      }. The sources may be rate limited. Try again, or name a nearby larger town.`,
       revision: state.revision + 1,
     });
     return;
   }
 
   applyPlan(merged, pool);
+
+  // Still nothing bookable, and we were filtering on what they asked for? The
+  // filters are the likeliest culprit, so try once without them and be honest
+  // that the result is a compromise rather than a match.
+  const priorShortfall = getState().shortfall;
+  if (!getState().plan && (cuisine || activity)) {
+    const openPool = await searchWithWidening({
+      at: place.at,
+      radiusKm: 6,
+      restaurants: { dietary: merged.dietary, avoid: merged.avoid, earliest: merged.earliest, party: merged.party },
+      events: { earliest: merged.earliest, latestEnd: merged.latestEnd },
+    });
+    if (openPool.restaurants.length) {
+      applyPlan(merged, openPool);
+      // getState() rather than the narrowed module binding: applyPlan just wrote to it.
+      const chosen = getState().plan;
+      if (chosen) {
+        // Only apologise for ignoring a preference we actually ignored. The
+        // unfiltered search often lands on the thing they asked for anyway.
+        const missed = [
+          cuisine && !`${chosen.dinner.restaurant.cuisine} ${chosen.dinner.restaurant.tags.join(" ")}`.toLowerCase().includes(cuisine) ? cuisine : null,
+          activity && chosen.event.event.category !== activity ? activity : null,
+        ].filter(Boolean);
+        if (missed.length) {
+          // If money was the reason, say the number. "Could not fit your
+          // preference" is useless; "two film tickets plus dinner is $95, your
+          // ceiling is $50" is something a person can act on.
+          const why = priorShortfall?.reason === "budget" && priorShortfall.cheapestTotal
+            ? ` Doing it with ${missed.join(" and ")} costs about ${priorShortfall.cheapestTotal} for ${merged.party}, over your ceiling of ${merged.budget}.`
+            : "";
+          set({
+            notice: `Nothing matching ${missed.join(" and ")} fit in ${place.label}, so this ignores that.${why} Everything else you asked for still holds.`,
+          });
+        }
+      }
+    }
+  }
 }
 
 /** Re-plan against the results already in hand. Used when a constraint changes
@@ -261,6 +316,7 @@ export function replan(c: Constraints = state.constraints): void {
 
 function applyPlan(c: Constraints, pool: CandidatePool) {
   const result = planWithRelaxation(c, pool);
+  const shortfall = result.plan ? null : diagnose(c, pool, result.rejected);
   set((s) => ({
     constraints: c,
     pool,
@@ -271,7 +327,8 @@ function applyPlan(c: Constraints, pool: CandidatePool) {
     trace: result.trace,
     considered: result.considered,
     relaxations: result.relaxations,
-    notice: result.plan ? null : s.notice,
+    shortfall,
+    notice: result.plan ? null : (shortfall ? `${shortfall.message} ${shortfall.suggestion}` : s.notice),
     // Any change to the plan invalidates a standing approval. Never let an
     // agent get approval for one evening and book a different one.
     approval: s.approval.status === "approved" || s.approval.status === "pending" ? { status: "idle" } : s.approval,

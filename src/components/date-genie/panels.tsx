@@ -53,7 +53,7 @@ function Panel({
 export function StatusPill() {
   const { webmcp, pool, searching } = useGenie();
   const live = webmcp.bound;
-  const found = pool ? pool.restaurants.length + pool.events.length + pool.parking.length : 0;
+  const found = pool ? pool.restaurants.length : 0;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span
@@ -72,7 +72,7 @@ export function StatusPill() {
         ) : pool ? (
           <>
             <span className="size-1.5 rounded-full bg-accent" aria-hidden />
-            {found} live results
+            {found} restaurants, {pool!.events.length} venues live
           </>
         ) : (
           <>nothing searched yet</>

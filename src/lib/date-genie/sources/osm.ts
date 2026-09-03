@@ -24,7 +24,7 @@ function bbox(at: LatLng, km: number): string {
 /** Escape a user-supplied term before it lands inside an Overpass regex. */
 const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "");
 
-async function overpass(query: string, timeoutMs = 22000): Promise<OsmElement[]> {
+async function overpass(query: string, timeoutMs = 11000): Promise<OsmElement[]> {
   try {
     const res = await fetch(`/api/osm?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return [];
@@ -156,7 +156,7 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
     const key = d.toLowerCase().replace(/\s+/g, "_").replace("gluten-free", "gluten_free");
     filters.push(`["diet:${key}"~"yes|only"]`);
   }
-  const query = `[out:json][timeout:25];\nnwr${filters.join("")}(${bb});\nout center 200;`;
+  const query = `[out:json][timeout:12];\nnwr${filters.join("")}(${bb});\nout center 200;`;
   const elements = await overpass(query);
   const out: Restaurant[] = [];
   for (const e of elements) {
@@ -218,7 +218,7 @@ async function searchEvents(q: EventQuery): Promise<EventItem[]> {
   const amenities = q.category
     ? (CATEGORY_TO_AMENITY[q.category] ?? (Object.keys(EVENT_KINDS) as (keyof typeof EVENT_KINDS)[]))
     : (Object.keys(EVENT_KINDS) as (keyof typeof EVENT_KINDS)[]);
-  const query = `[out:json][timeout:25];\n(\n${amenities
+  const query = `[out:json][timeout:12];\n(\n${amenities
     .map((a) => `  nwr["amenity"="${a}"]["name"](${bb});`)
     .join("\n")}\n);\nout center 120;`;
   const elements = await overpass(query);
@@ -236,15 +236,19 @@ async function searchEvents(q: EventQuery): Promise<EventItem[]> {
 
 async function searchParking(q: ParkingQuery): Promise<ParkingSpot[]> {
   const bb = bbox(q.at, q.radiusKm);
-  const query = `[out:json][timeout:25];\nnwr["amenity"="parking"]["name"](${bb});\nout center 120;`;
+  // Not requiring a name here: plenty of real garages are untagged, and a
+  // nameless lot you can actually park in beats a named one two miles away.
+  const query = `[out:json][timeout:12];\nnwr["amenity"="parking"]["access"!="private"](${bb});\nout center 150;`;
   const elements = await overpass(query);
   const out: ParkingSpot[] = [];
   for (const e of elements) {
     const at = coordsOf(e);
     const tags = e.tags ?? {};
-    const name = tags["name"];
-    if (!at || !name) continue;
+    if (!at) continue;
     const id = `osm_${e.type}_${e.id}`;
+    const name = tags["name"] ?? (tags["parking"] === "street_side" || tags["parking"] === "lane" ? "Street parking" : "Public parking");
+    // Staff-only lots are not somewhere you can leave a car on a date.
+    if (/employee|staff|resident|permit/i.test(name)) continue;
     out.push({
       id,
       name,

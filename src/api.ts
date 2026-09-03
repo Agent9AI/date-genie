@@ -46,13 +46,18 @@ const CONSTRAINT_SCHEMA = {
     party: { type: ["number", "null"], description: "How many people are going" },
     maxDriveMinutes: { type: ["number", "null"] },
     maxWalkMinutes: { type: ["number", "null"] },
-    interests: { type: "array", items: { type: "string" }, description: "Cuisines and activities they want: korean, comedy, live music, film, theater" },
+    cuisines: { type: "array", items: { type: "string" }, description: "Food they asked for, ONE WORD each, lowercase: korean, thai, pizza, seafood. Empty if they did not say." },
+    activities: {
+      type: "array",
+      items: { type: "string", enum: ["comedy", "music", "film", "class", "theater"] },
+      description: "What they want to do after dinner. A movie is 'film'. A concert, band, DJ or live music is 'music'. Stand-up is 'comedy'. A play or show is 'theater'. A workshop or making something is 'class'.",
+    },
     avoid: { type: "array", items: { type: "string" }, description: "Anything ruled out: seafood, loud, chain" },
     dietary: { type: "array", items: { type: "string", enum: ["vegan", "vegetarian", "gluten-free"] } },
     noisePreference: { type: ["string", "null"], enum: ["quiet", "moderate", "loud", null] },
     occasion: { type: ["string", "null"], description: "anniversary, birthday, first date, null" },
   },
-  required: ["interests", "avoid", "dietary"],
+  required: ["cuisines", "activities", "avoid", "dietary"],
 } as const;
 
 const UNDERSTAND_PROMPT = `You convert a person's plain-English request for a night out into structured constraints.
@@ -64,7 +69,8 @@ Rules:
 - "home by 11" means latestEnd "23:00".
 - "me and my girlfriend" means party 2.
 - Put dislikes in avoid: "she hates oysters" gives avoid ["oysters"], "nothing loud" gives avoid ["loud"] and noisePreference "quiet".
-- Put wants in interests: cuisines and activity types.
+- Split what they want in two. Food goes in cuisines as single lowercase words ("korean food" becomes "korean"). What they do afterwards goes in activities, and MUST be one of comedy, music, film, class, theater. "Movie?" is film. "live music" is music.
+- Never put an activity in cuisines. There is no restaurant that serves film.
 - location is the town or neighbourhood they named, with a state or country if given. Null if they named nowhere.
 - Use null for anything absent. Do not guess.
 
@@ -149,13 +155,18 @@ async function cached(request: Request, ttl: number, produce: () => Promise<Resp
 /* ----------------------------------------------------------- overpass ---- */
 
 async function overpass(query: string): Promise<unknown | null> {
+  // A whole-chain deadline, not three chances to be slow in sequence. A search
+  // nobody waits for is a search that failed.
+  const deadline = Date.now() + 9000;
   for (const host of OVERPASS_MIRRORS) {
+    const remaining = deadline - Date.now();
+    if (remaining < 1200) break;
     try {
       const res = await fetch(host, {
         method: "POST",
         body: new URLSearchParams({ data: query }),
         headers: { "user-agent": "date-genie/1.0 (https://date-genie.agent9.dev)" },
-        signal: AbortSignal.timeout(25000),
+        signal: AbortSignal.timeout(Math.min(6000, remaining)),
       });
       if (!res.ok) continue;
       const body = (await res.json()) as { elements?: unknown[] };

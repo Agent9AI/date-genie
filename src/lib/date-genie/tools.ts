@@ -87,7 +87,8 @@ const NO_PLACE =
 
 function planSummary(p: Plan): string {
   const lines = p.legs.filter((l) => l.kind !== "parking").map((l) => `${fmtTime(l.start)} · ${l.title} (${money(l.cost)})`);
-  return `${lines.join("\n")}\nParking: ${p.parking.spot.name}, ${money(p.parking.cost)}\nTotal: ${money(p.total)} for ${p.constraints.party}`;
+  const parking = p.parking ? `Parking: ${p.parking.spot.name}, ${money(p.parking.cost)}` : "Parking: none nearby, so take transit or a cab";
+  return `${lines.join("\n")}\n${parking}\nTotal: ${money(p.total)} for ${p.constraints.party}`;
 }
 
 function planPayload(p: Plan) {
@@ -105,7 +106,7 @@ function planPayload(p: Plan) {
       cost: p.event.cost,
       hop: p.event.hop,
     },
-    parking: { id: p.parking.spot.id, name: p.parking.spot.name, cost: p.parking.cost },
+    parking: p.parking ? { id: p.parking.spot.id, name: p.parking.spot.name, cost: p.parking.cost } : null,
     legs: p.legs.map((l) => ({ kind: l.kind, title: l.title, start: l.start, end: l.end, cost: l.cost })),
     why: p.why,
   };

@@ -2,10 +2,16 @@
  * Query-time search across every available adapter.
  *
  * Nothing here is cached in the page and nothing is stored per place. Each call
- * issues fresh, parameterised searches, in parallel, and merges the answers.
- * The only cache in the system is the Worker's edge cache, keyed by the exact
- * query string, which is a CDN doing its job rather than an inventory sitting
- * in memory pretending to be current.
+ * issues fresh, parameterised searches and merges the answers. The only cache in
+ * the system is the Worker's edge cache, keyed by the exact query string, which
+ * is a CDN doing its job rather than an inventory pretending to be current.
+ *
+ * Speed is a feature, so the strategy is speculative rather than sequential.
+ * The precise query and the relaxed query go out at the SAME TIME, and we keep
+ * whichever answered usefully. Filters miss often enough (OpenStreetMap diet
+ * tagging is superb in one town and absent in the next) that waiting for the
+ * precise query to fail before trying again cost more than simply asking twice.
+ * Both hit the same edge cache, so the redundant one is usually free.
  */
 import { milesBetween, type EventItem, type LatLng, type ParkingSpot, type Restaurant } from "../data";
 import { ACTIVE_ADAPTERS } from "./registry";
@@ -18,7 +24,12 @@ export type SearchInput = {
   events: Omit<EventQuery, "at" | "radiusKm">;
 };
 
-/** exactOptionalPropertyTypes means dropping a filter is a delete, not an undefined. */
+export type SearchOutcome = CandidatePool & {
+  /** Filters that had to be dropped, and why. Shown to the human verbatim. */
+  dropped: string[];
+};
+
+/** exactOptionalPropertyTypes means dropping a filter is a delete, not undefined. */
 function without<T extends object, K extends keyof T>(input: T, ...keys: K[]): Omit<T, K> {
   const copy = { ...input };
   for (const k of keys) delete copy[k];
@@ -29,119 +40,129 @@ function without<T extends object, K extends keyof T>(input: T, ...keys: K[]): O
 function dedupe<T extends { id: string; name: string; at: LatLng }>(items: T[]): T[] {
   const out: T[] = [];
   for (const item of items) {
-    const clash = out.find(
-      (o) => o.name.toLowerCase() === item.name.toLowerCase() && milesBetween(o.at, item.at) < 0.12,
-    );
-    if (!clash) out.push(item);
+    if (!out.some((o) => o.name.toLowerCase() === item.name.toLowerCase() && milesBetween(o.at, item.at) < 0.12)) {
+      out.push(item);
+    }
   }
   return out;
 }
 
-async function timed<T>(
-  fn: (() => Promise<T[]>) | undefined,
-): Promise<{ items: T[]; error?: string }> {
-  if (!fn) return { items: [] };
+async function attempt<T>(fn: (() => Promise<T[]>) | undefined): Promise<T[]> {
+  if (!fn) return [];
   try {
-    return { items: await fn() };
-  } catch (err) {
-    return { items: [], error: err instanceof Error ? err.message : "adapter failed" };
+    return await fn();
+  } catch {
+    return [];
   }
 }
 
+const ENOUGH = 6;
+
 /**
- * Fan out to every adapter. One slow or broken provider degrades the result,
- * it never fails the search.
+ * One round of fan-out. Every adapter, every category, and the relaxed variant
+ * of the restaurant query, all in flight together.
  */
-export async function searchCandidates(input: SearchInput): Promise<CandidatePool> {
+async function round(input: SearchInput): Promise<SearchOutcome> {
   const area = { at: input.at, radiusKm: input.radiusKm };
   const reports: SourceReport[] = [];
+  const dropped: string[] = [];
   const restaurants: Restaurant[] = [];
   const events: EventItem[] = [];
   const parking: ParkingSpot[] = [];
 
+  const narrowed = Boolean(input.restaurants.cuisine) || Boolean(input.restaurants.dietary?.length);
+  const hasCategory = Boolean(input.events.category);
+
   await Promise.all(
     ACTIVE_ADAPTERS.filter((a) => a.available).map(async (adapter) => {
       const started = performance.now();
-      const [r, e, p] = await Promise.all([
-        timed(adapter.searchRestaurants ? () => adapter.searchRestaurants!({ ...area, ...input.restaurants }) : undefined),
-        timed(adapter.searchEvents ? () => adapter.searchEvents!({ ...area, ...input.events }) : undefined),
-        timed(adapter.searchParking ? () => adapter.searchParking!(area) : undefined),
+      const searchR = adapter.searchRestaurants;
+      const searchE = adapter.searchEvents;
+
+      const [precise, broad, categoryEvents, allEvents, foundParking] = await Promise.all([
+        attempt(searchR ? () => searchR({ ...area, ...input.restaurants }) : undefined),
+        // The same search without the narrow filters, issued at the same time.
+        // Both hit the same edge cache, so asking twice is close to free.
+        narrowed ? attempt(searchR ? () => searchR({ ...area, ...without(input.restaurants, "cuisine", "dietary") }) : undefined) : Promise.resolve([] as Restaurant[]),
+        attempt(searchE ? () => searchE({ ...area, ...input.events }) : undefined),
+        hasCategory ? attempt(searchE ? () => searchE({ ...area, ...without(input.events, "category") }) : undefined) : Promise.resolve([] as EventItem[]),
+        attempt(adapter.searchParking ? () => adapter.searchParking!(area) : undefined),
       ]);
-      restaurants.push(...r.items);
-      events.push(...e.items);
-      parking.push(...p.items);
+
+      // Keep BOTH. A filter should shape the ranking, not shrink the world:
+      // the planner already scores a matching cuisine and a matching activity
+      // higher, so handing it everything means it can honour the preference
+      // when the preference is affordable and fall back gracefully when it is
+      // not, instead of returning nothing and blaming the user.
+      restaurants.push(...precise, ...broad);
+      const foundEvents = [...categoryEvents, ...allEvents];
+      events.push(...foundEvents);
+      parking.push(...foundParking);
       reports.push({
         id: adapter.id,
         label: adapter.label,
         kind: adapter.kind,
         available: true,
         ms: Math.round(performance.now() - started),
-        counts: { restaurants: r.items.length, events: e.items.length, parking: p.items.length },
-        ...(r.error ?? e.error ?? p.error ? { error: r.error ?? e.error ?? p.error! } : {}),
+        counts: { restaurants: precise.length + broad.length, events: foundEvents.length, parking: foundParking.length },
       });
     }),
   );
 
+  return { restaurants: dedupe(restaurants), events: dedupe(events), parking: dedupe(parking), reports, area, dropped };
+}
+
+/**
+ * Search once, then widen only what was actually thin.
+ *
+ * Re-running the whole fan-out to fix a shortage of cinemas would also re-fetch
+ * two hundred restaurants we already have. The second pass asks only for the
+ * category that came up short, which is the difference between a 19 second
+ * search and a 6 second one.
+ */
+export async function searchWithWidening(input: SearchInput): Promise<SearchOutcome> {
+  const first = await round(input);
+  const needRestaurants = first.restaurants.length < ENOUGH;
+  const needEvents = first.events.length < 2;
+  if (!needRestaurants && !needEvents) return first;
+
+  const wide = { at: input.at, radiusKm: input.radiusKm * 3 };
+  const adapters = ACTIVE_ADAPTERS.filter((a) => a.available);
+
+  const [moreRestaurants, moreEvents, moreParking] = await Promise.all([
+    needRestaurants
+      ? Promise.all(
+          adapters.map((a) =>
+            attempt(a.searchRestaurants ? () => a.searchRestaurants!({ ...wide, ...without(input.restaurants, "cuisine", "dietary") }) : undefined),
+          ),
+        ).then((xs) => xs.flat())
+      : Promise.resolve([] as Restaurant[]),
+    needEvents
+      ? Promise.all(
+          adapters.map((a) => attempt(a.searchEvents ? () => a.searchEvents!({ ...wide, ...without(input.events, "category") }) : undefined)),
+        ).then((xs) => xs.flat())
+      : Promise.resolve([] as EventItem[]),
+    needRestaurants || needEvents
+      ? Promise.all(adapters.map((a) => attempt(a.searchParking ? () => a.searchParking!(wide) : undefined))).then((xs) => xs.flat())
+      : Promise.resolve([] as ParkingSpot[]),
+  ]);
+
+  const dropped = [...first.dropped];
+  if (needRestaurants && moreRestaurants.length > first.restaurants.length && (input.restaurants.cuisine || input.restaurants.dietary?.length)) {
+    dropped.push("your food filters, because too little nearby is tagged with them");
+  }
+  if (needEvents && moreEvents.length > first.events.length && input.events.category) {
+    dropped.push(`the "${input.events.category}" filter, because there is not enough of it nearby`);
+  }
+
   return {
-    restaurants: dedupe(restaurants),
-    events: dedupe(events),
-    parking: dedupe(parking),
-    reports,
-    area,
+    ...first,
+    restaurants: moreRestaurants.length > first.restaurants.length ? dedupe(moreRestaurants) : first.restaurants,
+    events: moreEvents.length > first.events.length ? dedupe(moreEvents) : first.events,
+    parking: moreParking.length > first.parking.length ? dedupe(moreParking) : first.parking,
+    area: moreRestaurants.length || moreEvents.length ? wide : first.area,
+    dropped: [...new Set(dropped)],
   };
 }
 
-export type SearchOutcome = CandidatePool & {
-  /** Filters that had to be dropped upstream, and why. Shown to the human. */
-  dropped: string[];
-};
-
-const enough = (p: CandidatePool) => p.restaurants.length >= 6;
-
-/**
- * Search, then relax, in the order that loses the least.
- *
- * The upstream filters are genuinely useful when they hit, and genuinely fatal
- * when they miss: OpenStreetMap's `diet:vegetarian` tagging is excellent in some
- * towns and absent in others, and a cuisine filter can empty a small town on its
- * own. So try the precise query first, then widen the box, then drop the
- * narrowest filter, and say out loud which filter went.
- */
-export async function searchWithWidening(input: SearchInput): Promise<SearchOutcome> {
-  const dropped: string[] = [];
-
-  const precise = await searchCandidates(input);
-  if (enough(precise) && precise.events.length >= 3) return { ...precise, dropped };
-
-  const wider = await searchCandidates({ ...input, radiusKm: input.radiusKm * 2.5 });
-  const best = wider.restaurants.length > precise.restaurants.length ? wider : precise;
-  if (enough(best) && best.events.length >= 3) return { ...best, dropped };
-
-  if (input.restaurants.cuisine) {
-    const noCuisine = await searchCandidates({
-      ...input,
-      radiusKm: input.radiusKm * 2.5,
-      restaurants: without(input.restaurants, "cuisine"),
-    });
-    if (noCuisine.restaurants.length > best.restaurants.length) {
-      dropped.push(`the "${input.restaurants.cuisine}" filter, because too little nearby is tagged with it`);
-      if (enough(noCuisine)) return { ...noCuisine, dropped };
-    }
-  }
-
-  if (input.restaurants.dietary?.length) {
-    const noDiet = await searchCandidates({
-      ...input,
-      radiusKm: input.radiusKm * 2.5,
-      restaurants: without(input.restaurants, "cuisine", "dietary"),
-    });
-    if (noDiet.restaurants.length > best.restaurants.length) {
-      dropped.push(
-        `the ${input.restaurants.dietary.join(" and ")} filter, because OpenStreetMap has little diet tagging here. Check the menu before you go`,
-      );
-      return { ...noDiet, dropped };
-    }
-  }
-
-  return { ...best, dropped };
-}
+export const searchCandidates = round;

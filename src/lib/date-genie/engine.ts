@@ -43,6 +43,13 @@ export type Constraints = {
   /** "vegan" | "vegetarian" | "gluten-free" -> requires a matching tag. */
   dietary: string[];
   noisePreference?: "quiet" | "moderate" | "loud";
+  /**
+   * What fraction of the budget a good answer should actually cost, 0 to 1.
+   * A ceiling is not a target. Someone who says "cheap midweek thing" wants the
+   * bottom of their range; someone who says "it's our anniversary, under $300"
+   * did not set aside $300 hoping to spend $102.
+   */
+  spendTarget: number;
 };
 
 export const DEFAULT_CONSTRAINTS: Constraints = {
@@ -56,6 +63,7 @@ export const DEFAULT_CONSTRAINTS: Constraints = {
   interests: [],
   avoid: [],
   dietary: [],
+  spendTarget: 0.7,
 };
 
 export type PlanLeg = {
@@ -79,7 +87,9 @@ export type Plan = {
   legs: PlanLeg[];
   dinner: { restaurant: Restaurant; time: string; cost: number };
   event: { event: EventItem; cost: number; walkMinutes: number; hop: Hop };
-  parking: { spot: ParkingSpot; cost: number; walkMinutes: number };
+  /** Null when there is nowhere to park nearby, which in a transit city is
+   *  the normal answer rather than a failure. */
+  parking: { spot: ParkingSpot; cost: number; walkMinutes: number } | null;
   total: number;
   score: number;
   headline: string;
@@ -221,10 +231,11 @@ export function findParkingNear(pool: ParkingSpot[], anchor: LatLng | undefined,
 
 /* ------------------------------------------------------------ planner ---- */
 
-function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot, c: Constraints, hop: Hop, parkWalk: number): PlanLeg[] {
+function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot | null, c: Constraints, hop: Hop, parkWalk: number): PlanLeg[] {
   const dinnerEnd = fromMinutes(toMinutes(time) + mealMinutes(r));
-  return [
-    {
+  const legs: PlanLeg[] = [];
+  if (spot) {
+    legs.push({
       kind: "parking",
       id: spot.id,
       title: spot.name,
@@ -235,7 +246,9 @@ function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot,
       glyph: "🅿️",
       neighborhood: r.neighborhood,
       detail: `${spot.spacesLeft} spaces left`,
-    },
+    });
+  }
+  legs.push(
     {
       kind: "dinner",
       id: r.id,
@@ -260,7 +273,8 @@ function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot,
       neighborhood: e.neighborhood,
       detail: e.blurb,
     },
-  ];
+  );
+  return legs;
 }
 
 /**
@@ -335,13 +349,10 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
         }
         // Walking to the event means one lot by dinner. Driving means you move
         // the car, so park where you will actually leave it: at the event.
-        const spots = findParkingNear(pool.parking, hop.mode === "walk" ? r.at : e.at, { maxWalkMinutes: 10 });
-        const spot = spots[0];
-        if (!spot) {
-          bump("no parking within a 10 min walk");
-          continue;
-        }
-        const total = r.pricePerPerson * c.party + e.pricePerTicket * c.party + spot.priceForEvening;
+        // Parking is a convenience, not a precondition. Requiring it made the
+        // planner useless in exactly the cities with the best nights out.
+        const spot = findParkingNear(pool.parking, hop.mode === "walk" ? r.at : e.at, { maxWalkMinutes: 10 })[0] ?? null;
+        const total = r.pricePerPerson * c.party + e.pricePerTicket * c.party + (spot?.priceForEvening ?? 0);
         if (total > c.budget) {
           bump(`over your ${money(c.budget)} ceiling`);
           continue;
@@ -356,26 +367,49 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
         const chainPenalty = r.tags.includes("chain") ? 1.4 : 0;
         // A walkable evening is genuinely nicer than a drive between courses.
         const hopPenalty = hop.mode === "walk" ? hop.minutes / 18 : 0.6 + hop.minutes / 14;
-        const interestBoost = c.interests.includes(e.category) ? 1.6 : 0;
-        const cuisineBoost = c.interests.some((i) => r.cuisine.toLowerCase().includes(i)) ? 1.2 : 0;
-        const headroom = (c.budget - total) / c.budget; // reward leaving money on the table
+        // An explicit ask outranks almost everything else. If someone said
+        // "live music", a cinema is a worse answer than a slightly pricier bar
+        // with a band in it.
+        const interestBoost = c.interests.includes(e.category) ? 4.5 : 0;
+        const cuisineBoost = c.interests.some((i) => `${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(i)) ? 3.5 : 0;
+        // Spend to the target, not to the floor. Symmetric penalty, so this
+        // punishes blowing the budget and punishes being needlessly stingy.
+        const ratio = total / Math.max(1, c.budget);
+        const budgetFit = 1 - Math.min(1.5, Math.abs(ratio - c.spendTarget) / Math.max(0.25, c.spendTarget));
         const pacing = 1 - Math.abs(slack - 20) / 60; // ~20 min of slack feels right
+        // Having somewhere to park is worth something, just not everything.
+        const parkingBonus = spot ? 0.25 : 0;
+        // Weighting note, because it is the most important judgement call here:
+        // the rating is SIMULATED, so it gets a small weight and acts as a
+        // tiebreaker. Letting fabricated stars outvote the things the human
+        // actually told us produced a $102 anniversary out of a $300 budget.
+        // Everything with a heavy weight below is either stated by the human or
+        // computed from real coordinates.
         const score =
-          r.rating * 1.6 + interestBoost + cuisineBoost + headroom * 0.45 + pacing * 1.1 - hopPenalty - chainPenalty - spot.walkMinutes / 30;
+          parkingBonus +
+          r.rating * 0.7 +
+          interestBoost +
+          cuisineBoost +
+          budgetFit * 3.2 +
+          pacing * 1.1 -
+          hopPenalty -
+          chainPenalty -
+          (spot?.walkMinutes ?? 0) / 30;
 
         const why: string[] = [];
         if (cuisineBoost) why.push(`${r.cuisine} was on your list`);
         if (interestBoost) why.push(`you asked for ${e.category}`);
+        if (ratio >= 0.6) why.push(`uses ${Math.round(ratio * 100)}% of your budget`);
         why.push(`${hop.minutes} min ${hop.mode} between the two`);
-        why.push(`${money(c.budget - total)} left over`);
+        if (ratio < 0.6) why.push(`${money(c.budget - total)} left over`);
         if (slack >= 10 && slack <= 35) why.push("time for a drink in between");
 
         candidates.push({
           id: `${r.id}__${time}__${e.id}`,
-          legs: buildLegs(r, time, e, spot, c, hop, spot.walkMinutes),
+          legs: buildLegs(r, time, e, spot, c, hop, spot?.walkMinutes ?? 0),
           dinner: { restaurant: r, time, cost: r.pricePerPerson * c.party },
           event: { event: e, cost: e.pricePerTicket * c.party, walkMinutes: hop.minutes, hop },
-          parking: { spot, cost: spot.priceForEvening, walkMinutes: spot.walkMinutes },
+          parking: spot ? { spot, cost: spot.priceForEvening, walkMinutes: spot.walkMinutes } : null,
           total,
           score,
           headline: `${r.cuisine}, then ${e.category}`,
@@ -503,6 +537,9 @@ export function planWithRelaxation(c: Constraints, pool: CandidatePool, maxSteps
         exhausted.add(index);
         continue;
       }
+      // One shot per rule. Sliding dinner earlier three times in a row is not
+      // three insights, it is a loop with a nice label on it.
+      exhausted.add(index);
       widened = candidate;
       break;
     }
@@ -516,6 +553,62 @@ export function planWithRelaxation(c: Constraints, pool: CandidatePool, maxSteps
     }
   }
   return { ...attempt, relaxations };
+}
+
+/**
+ * When nothing fits, say what WOULD.
+ *
+ * "No results" is the least useful sentence software can produce. If the budget
+ * is the binding constraint, the person needs one number: the cheapest evening
+ * that actually exists where they are. This computes it by relaxing money
+ * entirely and keeping every other rule, then reports the shortfall line by
+ * line so they can decide what to give up.
+ */
+export type Shortfall = {
+  reason: "budget" | "time" | "nothing-nearby";
+  message: string;
+  cheapestTotal?: number;
+  breakdown?: { dinner: number; tickets: number; parking: number };
+  suggestion: string;
+};
+
+export function diagnose(c: Constraints, pool: CandidatePool, rejected: Record<string, number>): Shortfall {
+  const top = Object.entries(rejected).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+
+  if (!pool.restaurants.length || !pool.events.length) {
+    return {
+      reason: "nothing-nearby",
+      message: `Only ${pool.restaurants.length} restaurants and ${pool.events.length} venues came back nearby.`,
+      suggestion: "Name a larger town, or widen the drive radius.",
+    };
+  }
+
+  if (top.includes("ceiling") || top.includes("over your")) {
+    // Rebuild with money removed, everything else intact.
+    const uncapped = planDateNight({ ...c, budget: Number.MAX_SAFE_INTEGER }, pool);
+    const cheapest = uncapped.plan;
+    if (cheapest) {
+      const breakdown = { dinner: cheapest.dinner.cost, tickets: cheapest.event.cost, parking: cheapest.parking?.cost ?? 0 };
+      return {
+        reason: "budget",
+        cheapestTotal: cheapest.total,
+        breakdown,
+        message: `The cheapest evening that satisfies everything else you asked for is ${money(cheapest.total)}: ${money(breakdown.dinner)} dinner for ${c.party}, ${money(breakdown.tickets)} tickets, ${money(breakdown.parking)} parking. Your ceiling is ${money(c.budget)}.`,
+        suggestion:
+          breakdown.parking > 0 && cheapest.total - breakdown.parking <= c.budget
+            ? `Take transit instead of driving and it fits: ${money(cheapest.total - breakdown.parking)}.`
+            : cheapest.total - breakdown.tickets <= c.budget
+              ? `Dinner alone fits at ${money(cheapest.total - breakdown.tickets)}. The tickets are what breaks it.`
+              : `Raise the budget to ${money(Math.ceil(cheapest.total / 5) * 5)}, or cut the party size.`,
+      };
+    }
+  }
+
+  return {
+    reason: "time",
+    message: `The blocker was ${top || "your combination of constraints"}.`,
+    suggestion: "Loosen the earliest start, the end time, or how far you will walk.",
+  };
 }
 
 /** The receipt that proves every stated constraint actually holds. */
@@ -644,7 +737,7 @@ export function reserveSpot(p: ParkingSpot | undefined, input: { arriveBy: strin
 export function bookPlan(plan: Plan, approvalId: string): Booking {
   const table = reserveTable(plan.dinner.restaurant, { time: plan.dinner.time, party: plan.constraints.party });
   const tickets = reserveTickets(plan.event.event, { quantity: plan.constraints.party });
-  const parking = reserveSpot(plan.parking.spot, { arriveBy: plan.legs[0]!.start });
+  const parking = plan.parking ? reserveSpot(plan.parking.spot, { arriveBy: plan.legs[0]!.start }) : null;
 
   return {
     confirmation: code("GENIE"),
@@ -665,12 +758,16 @@ export function bookPlan(plan: Plan, approvalId: string): Booking {
         cost: plan.event.cost,
         confirmation: tickets.ok ? tickets.confirmation : "FAILED",
       },
-      {
-        label: plan.parking.spot.name,
-        detail: `arrive by ${fmtTime(plan.legs[0]!.start)}`,
-        cost: plan.parking.cost,
-        confirmation: parking.ok ? parking.confirmation : "FAILED",
-      },
+      ...(plan.parking && parking
+        ? [
+            {
+              label: plan.parking.spot.name,
+              detail: `arrive by ${fmtTime(plan.legs[0]!.start)}`,
+              cost: plan.parking.cost,
+              confirmation: parking.ok ? parking.confirmation : "FAILED",
+            },
+          ]
+        : []),
     ],
   };
 }
@@ -678,7 +775,59 @@ export function bookPlan(plan: Plan, approvalId: string): Booking {
 /* --------------------------------------------- natural language input ---- */
 
 const CUISINES = ["korean", "seafood", "oyster", "mexican", "indian", "steak", "japanese", "french", "mediterranean", "salvadoran", "vegan", "noodle"];
-const CATEGORIES = ["comedy", "music", "film", "class", "theater"];
+
+/**
+ * What you do after dinner, as opposed to what you eat. Keeping these apart
+ * matters more than it looks: "Movie?" used to land in the same bucket as
+ * "Korean", and then went upstream as a cuisine filter, which asked for
+ * restaurants serving film and returned an empty town.
+ */
+export const ACTIVITY_CATEGORIES = ["comedy", "music", "film", "class", "theater"] as const;
+const CATEGORIES = [...ACTIVITY_CATEGORIES];
+
+/**
+ * Map the many words people use for a night out onto the five we can search.
+ * Models and humans both say "movie" far more often than "film".
+ */
+const ACTIVITY_SYNONYMS: Record<string, string> = {
+  movie: "film", movies: "film", cinema: "film", screening: "film", "a movie": "film",
+  concert: "music", band: "music", bands: "music", dj: "music", gig: "music", jazz: "music",
+  "live music": "music", "live band": "music",
+  standup: "comedy", "stand-up": "comedy", "stand up": "comedy", comedian: "comedy", funny: "comedy",
+  play: "theater", show: "theater", theatre: "theater", musical: "theater", shakespeare: "theater",
+  workshop: "class", pottery: "class", clay: "class", painting: "class", "making something": "class",
+};
+
+/** Reduce a free-text interest to a canonical activity, or null if it is food. */
+export function toActivity(term: string): string | null {
+  const t = term.trim().toLowerCase();
+  if ((ACTIVITY_CATEGORIES as readonly string[]).includes(t)) return t;
+  if (ACTIVITY_SYNONYMS[t]) return ACTIVITY_SYNONYMS[t]!;
+  for (const [k, v] of Object.entries(ACTIVITY_SYNONYMS)) if (t.includes(k)) return v;
+  return null;
+}
+
+/**
+ * Reduce a free-text food interest to a single searchable token. Upstream tag
+ * search matches "korean", never "korean food".
+ */
+export function toCuisine(term: string): string | null {
+  const t = term.trim().toLowerCase();
+  if (toActivity(t)) return null;
+  const cleaned = t.replace(/\b(food|cuisine|restaurant|place|spot|joint)\b/g, "").trim();
+  if (!cleaned || cleaned.length < 3) return null;
+  // Upstream cuisine tags are single tokens. Take the most specific word.
+  const word = cleaned.split(/\s+/).filter((w) => w.length > 2).pop();
+  return word ?? null;
+}
+
+/** The subset of stated interests that name food. */
+export const cuisineInterests = (c: Constraints): string[] =>
+  [...new Set(c.interests.map(toCuisine).filter((x): x is string => Boolean(x)))];
+
+/** The subset that names something to do afterwards. */
+export const activityInterests = (c: Constraints): string[] =>
+  [...new Set(c.interests.map(toActivity).filter((x): x is string => Boolean(x)))];
 
 /**
  * Pull a place name out of the raw request, preserving its capitalisation so
@@ -754,6 +903,10 @@ export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAIN
     if (hit) c.avoid.push(hit === "oyster" ? "oysters" : hit);
   }
   if (/\b(quiet|somewhere quiet|not too loud|low.key|lowkey|conversation)\b/.test(t)) c.noisePreference = "quiet";
+
+  // A ceiling means different things to different nights.
+  if (/\b(cheap|budget|affordable|inexpensive|on a budget|not too expensive)\b/.test(t)) c.spendTarget = 0.45;
+  else if (/\b(anniversary|birthday|celebrat|special|splash out|somewhere nice|fancy|treat)\b/.test(t)) c.spendTarget = 0.85;
 
   c.avoid = [...new Set(c.avoid)];
   c.dietary = [...new Set(c.dietary)];

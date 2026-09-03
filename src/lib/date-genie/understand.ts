@@ -16,7 +16,7 @@
  * The model never selects a venue and never computes a total. That stays in the
  * planner, where it can be audited.
  */
-import { DEFAULT_CONSTRAINTS, extractLocation, parseRequest, type Constraints } from "./engine";
+import { DEFAULT_CONSTRAINTS, activityInterests, cuisineInterests, extractLocation, parseRequest, type Constraints } from "./engine";
 
 export type Understanding = {
   constraints: Constraints;
@@ -36,6 +36,8 @@ type RawConstraints = {
   maxDriveMinutes?: number | null;
   maxWalkMinutes?: number | null;
   interests?: unknown;
+  cuisines?: unknown;
+  activities?: unknown;
   avoid?: unknown;
   dietary?: unknown;
   noisePreference?: string | null;
@@ -67,7 +69,9 @@ function applyRaw(base: Constraints, raw: RawConstraints, text: string): Constra
   if (raw.noisePreference === "quiet" || raw.noisePreference === "moderate" || raw.noisePreference === "loud")
     next.noisePreference = raw.noisePreference;
 
-  next.interests = [...new Set([...next.interests, ...strings(raw.interests)])];
+  next.interests = [
+    ...new Set([...next.interests, ...strings(raw.interests), ...strings(raw.cuisines), ...strings(raw.activities)]),
+  ];
   next.avoid = [...new Set([...next.avoid, ...strings(raw.avoid)])];
   next.dietary = [...new Set([...next.dietary, ...strings(raw.dietary)])].filter((d) =>
     ["vegan", "vegetarian", "gluten-free"].includes(d),
@@ -77,9 +81,15 @@ function applyRaw(base: Constraints, raw: RawConstraints, text: string): Constra
   // layer suggested it.
   next.interests = next.interests.filter((i) => !next.avoid.some((a) => a.includes(i) || i.includes(a)));
 
-  // An occasion is a budget signal, not a constraint. Only nudge, never override.
-  if (typeof raw.occasion === "string" && /anniversar|birthday|engage|proposal/i.test(raw.occasion) && next.budget === DEFAULT_CONSTRAINTS.budget) {
-    next.budget = Math.round(next.budget * 1.4);
+  // Collapse everything to the canonical vocabulary the search can actually use,
+  // so "korean food" and "Movie?" become "korean" and "film".
+  next.interests = [...new Set([...cuisineInterests(next), ...activityInterests(next)])];
+
+  // An occasion does not change the ceiling, it changes where in the range a
+  // good answer sits. Nobody sets aside $300 for an anniversary hoping to be
+  // handed a $102 evening.
+  if (typeof raw.occasion === "string" && /anniversar|birthday|engage|proposal|celebrat/i.test(raw.occasion)) {
+    next.spendTarget = 0.85;
   }
   return next;
 }
