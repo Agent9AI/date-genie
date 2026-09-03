@@ -90,10 +90,11 @@ export type Plan = {
 
 export function planDateNight(c: Constraints): { plan: Plan | null; log: string[] } {
   const log: string[] = [];
+  const cuisine = c.interests.find((i) => RESTAURANTS.some((r) => r.cuisine.toLowerCase().includes(i)));
   const restaurants = findRestaurants({
     maxDriveMinutes: c.maxDriveMinutes,
     earliest: c.earliest,
-    cuisine: c.interests.find((i) => RESTAURANTS.some((r) => r.cuisine.toLowerCase().includes(i))),
+    ...(cuisine ? { cuisine } : {}),
   });
   log.push(`findRestaurants() → ${restaurants.length} matches within ${c.maxDriveMinutes} min`);
 
