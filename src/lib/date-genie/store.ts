@@ -6,20 +6,26 @@
  * not talking to a backend behind the user's back, it is sitting at the same
  * table, touching the same state, and the human watches it happen.
  *
- * Deliberately framework-free (a 40-line observable) so the tool layer never
+ * Note what is NOT here: any inventory. `pool` holds the results of the last
+ * search and nothing else. Change the location or the constraints and it is
+ * replaced by a fresh search. There is no city cached in this page.
+ *
+ * Deliberately framework-free (a small observable) so the tool layer never
  * imports React and can be lifted into any site.
  */
-import { SEED_COUNTS, applyInventory, setHome } from "./data";
-import { fetchLiveVenues, geocode, type Place } from "./live-venues";
 import {
   DEFAULT_CONSTRAINTS,
   planWithRelaxation,
-  type Relaxation,
   type Booking,
   type CheckRow,
   type Constraints,
   type Plan,
+  type Relaxation,
 } from "./engine";
+import { setHome } from "./data";
+import { geocode, locateMe, reverseGeocode, type Place } from "./sources/geocode";
+import { searchWithWidening } from "./sources/search";
+import type { CandidatePool } from "./sources/types";
 
 export type ToolCall = {
   id: string;
@@ -40,39 +46,27 @@ export type ApprovalState =
 
 export type State = {
   constraints: Constraints;
-  /** The request the human (or agent) last phrased in words. */
   utterance: string;
+  /** Where we are searching. Null until the human says, or geolocation answers. */
+  place: Place | null;
+  /** Results of the most recent search. Never persisted, never reused across places. */
+  pool: CandidatePool | null;
   plan: Plan | null;
   alternates: Plan[];
   checks: CheckRow[];
   trace: string[];
   considered: number;
-  /** Constraints the planner had to widen, shown to the human verbatim. */
   relaxations: Relaxation[];
   calls: ToolCall[];
   approval: ApprovalState;
   booking: Booking | null;
-  /** Preferences the genie has learned and will never violate again. */
   vetoes: string[];
   webmcp: { bound: boolean; surface: string; tools: string[]; agentSeen: boolean };
-  /** Where the venue inventory came from, so nobody has to guess. */
-  inventory: {
-    source: "seed" | "openstreetmap";
-    restaurants: number;
-    parking: number;
-    events: number;
-    fetchedAt: number | null;
-    loading: boolean;
-    /** Set when a place was named but nothing usable came back. */
-    notice: string | null;
-  };
-  /** Where the user says they are tonight. Drives every query and drive time. */
-  place: Place;
-  thinking: boolean;
-  /** What the built-in demo agent is currently saying, newest last. */
+  searching: boolean;
+  /** Set when a search ran and could not produce an evening. Shown verbatim. */
+  notice: string | null;
   narration: string[];
   demoRunning: boolean;
-  /** Bumped whenever a tool call changes the plan, to retrigger UI animations. */
   revision: number;
 };
 
@@ -100,6 +94,8 @@ function saveVetoes(v: string[]) {
 let state: State = {
   constraints: { ...DEFAULT_CONSTRAINTS },
   utterance: "",
+  place: null,
+  pool: null,
   plan: null,
   alternates: [],
   checks: [],
@@ -111,17 +107,8 @@ let state: State = {
   booking: null,
   vetoes: [],
   webmcp: { bound: false, surface: "none", tools: [], agentSeen: false },
-  inventory: {
-    source: "seed",
-    restaurants: SEED_COUNTS.restaurants,
-    parking: SEED_COUNTS.parking,
-    events: SEED_COUNTS.events,
-    fetchedAt: null,
-    loading: false,
-    notice: null,
-  },
-  place: { label: "Arlington, Virginia", at: { lat: 38.8816, lng: -77.1117 } },
-  thinking: false,
+  searching: false,
+  notice: null,
   narration: [],
   demoRunning: false,
   revision: 0,
@@ -129,9 +116,7 @@ let state: State = {
 
 const listeners = new Set<() => void>();
 
-export function getState(): State {
-  return state;
-}
+export const getState = (): State => state;
 
 export function subscribe(fn: () => void): () => void {
   listeners.add(fn);
@@ -144,7 +129,8 @@ export function set(patch: Partial<State> | ((s: State) => Partial<State>)) {
   listeners.forEach((l) => l());
 }
 
-/** Vetoes live in localStorage so the genie still knows on your next visit. */
+/** Vetoes are the only thing that persists, because they are about the human,
+ *  not about a place. */
 export function hydrate() {
   const vetoes = loadVetoes();
   set({ vetoes, constraints: { ...state.constraints, avoid: [...new Set([...state.constraints.avoid, ...vetoes])] } });
@@ -163,30 +149,8 @@ export function removeVeto(term: string) {
   const t = term.trim().toLowerCase();
   const vetoes = state.vetoes.filter((v) => v !== t);
   saveVetoes(vetoes);
-  set({
-    vetoes,
-    constraints: { ...state.constraints, avoid: state.constraints.avoid.filter((a) => a !== t) },
-  });
+  set({ vetoes, constraints: { ...state.constraints, avoid: state.constraints.avoid.filter((a) => a !== t) } });
   return vetoes;
-}
-
-/** Re-run the planner against whatever the constraints currently are. */
-export function replan(c: Constraints = state.constraints): void {
-  const merged: Constraints = { ...c, avoid: [...new Set([...c.avoid, ...state.vetoes])] };
-  const result = planWithRelaxation(merged);
-  set((s) => ({
-    constraints: merged,
-    plan: result.plan,
-    alternates: result.alternates,
-    checks: result.checks,
-    trace: result.trace,
-    considered: result.considered,
-    relaxations: result.relaxations,
-    // Any change to the plan invalidates a standing approval. Never let an
-    // agent get approval for a $164 night and then book a $400 one.
-    approval: s.approval.status === "approved" || s.approval.status === "pending" ? { status: "idle" } : s.approval,
-    revision: s.revision + 1,
-  }));
 }
 
 export function narrate(line: string) {
@@ -201,56 +165,110 @@ export function patchCall(id: string, patch: Partial<ToolCall>) {
   set((s) => ({ calls: s.calls.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
 }
 
-/**
- * Pull the real Arlington venue list from OpenStreetMap and swap it in.
- * Silent no-op on failure: the curated seed inventory stays, and the badge
- * keeps saying "seed" rather than claiming a freshness the app does not have.
- */
-export async function loadLiveInventory(place: Place = state.place): Promise<boolean> {
-  set((s) => ({ inventory: { ...s.inventory, loading: true, notice: null } }));
-  const live = await fetchLiveVenues(place);
-  if (!live) {
-    set((s) => ({
-      inventory: {
-        ...s.inventory,
-        loading: false,
-        notice: `Could not build an evening around ${place.label}. Showing the curated Arlington set instead.`,
-      },
-    }));
-    return false;
-  }
-  applyInventory(live);
-  setHome(place.at);
-  set({
-    place,
-    inventory: {
-      source: live.source,
-      restaurants: live.restaurants.length,
-      parking: live.parking.length,
-      events: live.events.length,
-      fetchedAt: live.fetchedAt,
-      loading: false,
-      notice: null,
-    },
-  });
-  if (state.plan) replan(state.constraints);
-  return true;
-}
+/* ----------------------------------------------------------- location ---- */
 
-/**
- * Geocode a place name and reload every venue around it. This is what makes
- * the app work in Fredericksburg, or Lisbon, rather than one hardcoded city.
- */
-export async function setLocation(query: string): Promise<{ ok: boolean; place?: Place; error?: string }> {
-  set((s) => ({ inventory: { ...s.inventory, loading: true, notice: null } }));
+export async function setPlace(query: string): Promise<{ ok: boolean; place?: Place; error?: string }> {
+  set({ searching: true, notice: null });
   const place = await geocode(query);
   if (!place) {
-    set((s) => ({ inventory: { ...s.inventory, loading: false, notice: `Could not find "${query}" on the map.` } }));
+    set({ searching: false, notice: `Could not find "${query}" on the map.` });
     return { ok: false, error: `Could not find "${query}". Try adding a state or country, e.g. "Fredericksburg, VA".` };
   }
-  const ok = await loadLiveInventory(place);
-  if (!ok) return { ok: false, place, error: `Found ${place.label}, but OpenStreetMap had too few venues nearby to compose an evening.` };
+  setHome(place.at);
+  set({ place, pool: null });
+  await search();
   return { ok: true, place };
+}
+
+/** Offer to start where the human actually is, rather than picking a city for them. */
+export async function useMyLocation(): Promise<Place | null> {
+  set({ searching: true, notice: null });
+  const at = await locateMe();
+  if (!at) {
+    set({ searching: false, notice: "Location permission was declined. Type a place instead." });
+    return null;
+  }
+  const place = (await reverseGeocode(at)) ?? { label: "your location", at };
+  setHome(place.at);
+  set({ place, pool: null });
+  await search();
+  return place;
+}
+
+/* ------------------------------------------------------------- search ---- */
+
+/**
+ * One search, one plan. Every call goes to the adapters fresh with the current
+ * constraints compiled into the query. Nothing is reused from a previous place.
+ */
+export async function search(c: Constraints = state.constraints): Promise<void> {
+  const place = state.place;
+  if (!place) {
+    set({ notice: "Tell me where you are first." });
+    return;
+  }
+  const merged: Constraints = { ...c, avoid: [...new Set([...c.avoid, ...state.vetoes])] };
+  set({ searching: true, constraints: merged, notice: null });
+
+  const pool = await searchWithWidening({
+    at: place.at,
+    radiusKm: 5,
+    restaurants: {
+      ...(merged.interests.length ? { cuisine: merged.interests[0]! } : {}),
+      dietary: merged.dietary,
+      avoid: merged.avoid,
+      earliest: merged.earliest,
+      party: merged.party,
+    },
+    events: { earliest: merged.earliest, latestEnd: merged.latestEnd },
+  });
+
+  if (!pool.restaurants.length) {
+    set({
+      searching: false,
+      pool,
+      plan: null,
+      alternates: [],
+      checks: [],
+      notice: `No restaurants came back for ${place.label}. The sources may be rate limited, or the area may genuinely be thin. Try again, or widen the search by naming a nearby larger town.`,
+      revision: state.revision + 1,
+    });
+    return;
+  }
+
+  applyPlan(merged, pool);
+}
+
+/** Re-plan against the results already in hand. Used when a constraint changes
+ *  in a way that does not need a new search (budget, party, times). */
+export function replan(c: Constraints = state.constraints): void {
+  const merged: Constraints = { ...c, avoid: [...new Set([...c.avoid, ...state.vetoes])] };
+  if (!state.pool) {
+    set({ constraints: merged });
+    void search(merged);
+    return;
+  }
+  applyPlan(merged, state.pool);
+}
+
+function applyPlan(c: Constraints, pool: CandidatePool) {
+  const result = planWithRelaxation(c, pool);
+  set((s) => ({
+    constraints: c,
+    pool,
+    searching: false,
+    plan: result.plan,
+    alternates: result.alternates,
+    checks: result.checks,
+    trace: result.trace,
+    considered: result.considered,
+    relaxations: result.relaxations,
+    notice: result.plan ? null : s.notice,
+    // Any change to the plan invalidates a standing approval. Never let an
+    // agent get approval for one evening and book a different one.
+    approval: s.approval.status === "approved" || s.approval.status === "pending" ? { status: "idle" } : s.approval,
+    revision: s.revision + 1,
+  }));
 }
 
 /* ------------------------------------------------------ approval gate ---- */
@@ -287,7 +305,8 @@ export function resolveApproval(approved: boolean, note?: string) {
 /** A one-time token: consumed by book_approved_plan, never reusable. */
 export function consumeApproval(nonce: string): { ok: true; plan: Plan; id: string } | { ok: false; error: string } {
   const a = state.approval;
-  if (a.status !== "approved") return { ok: false, error: "No approved plan. Call request_approval first and wait for the human to confirm in the page." };
+  if (a.status !== "approved")
+    return { ok: false, error: "No approved plan. Call request_approval first and wait for the human to confirm in the page." };
   if (a.nonce !== nonce) return { ok: false, error: "Approval token does not match the approved plan." };
   set({ approval: { status: "idle" } });
   return { ok: true, plan: a.plan, id: a.id };
@@ -304,6 +323,7 @@ export function reset() {
     calls: [],
     utterance: "",
     narration: [],
+    notice: null,
     revision: state.revision + 1,
   });
 }

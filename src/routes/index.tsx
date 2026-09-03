@@ -84,7 +84,6 @@ function DateGenie() {
 
   useEffect(() => {
     store.hydrate();
-    void store.loadLiveInventory();
     const bound = bindWebMcp();
     setReady(true);
     if (typeof console !== "undefined") {

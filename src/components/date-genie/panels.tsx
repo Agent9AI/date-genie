@@ -51,31 +51,31 @@ function Panel({
 }
 
 export function StatusPill() {
-  const { webmcp, inventory } = useGenie();
+  const { webmcp, pool, searching } = useGenie();
   const live = webmcp.bound;
-  const osm = inventory.source === "openstreetmap";
+  const found = pool ? pool.restaurants.length + pool.events.length + pool.parking.length : 0;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span
-        className={`rule-chip ${osm ? "border-accent/50 text-accent" : ""}`}
+        className={`rule-chip ${pool ? "border-accent/50 text-accent" : ""}`}
         title={
-          osm
-            ? "Venue names, coordinates, cuisines and diet tags are fetched live from OpenStreetMap. Prices, ratings and table availability are simulated."
-            : "OpenStreetMap was unreachable, so the curated seed inventory is in use."
+          pool
+            ? `Live results from ${pool.reports.map((r) => `${r.label} (${r.ms}ms)`).join(", ")}. Names, locations, cuisines and diet tags are real. Prices, ratings, showtimes and availability are simulated.`
+            : "No search has run yet. Nothing about any place is stored in this page."
         }
       >
-        {inventory.loading ? (
+        {searching ? (
           <>
             <span className="size-1.5 rounded-full bg-primary dg-live-dot" aria-hidden />
-            loading Arlington…
+            searching…
           </>
-        ) : osm ? (
+        ) : pool ? (
           <>
             <span className="size-1.5 rounded-full bg-accent" aria-hidden />
-            {inventory.restaurants} venues live from OpenStreetMap
+            {found} live results
           </>
         ) : (
-          <>{inventory.restaurants} seed venues</>
+          <>nothing searched yet</>
         )}
       </span>
       <span
@@ -99,9 +99,9 @@ export function StatusPill() {
 /* -------------------------------------------------------- command bar ---- */
 
 export function CommandBar({ onRun, samples }: { onRun: (text: string) => void; samples: string[] }) {
-  const { demoRunning, thinking } = useGenie();
+  const { demoRunning, searching } = useGenie();
   const [text, setText] = useState(samples[0] ?? "");
-  const busy = demoRunning || thinking;
+  const busy = demoRunning || searching;
 
   return (
     <div className="surface glow-ring p-4 sm:p-5">
@@ -189,7 +189,7 @@ function Dial({
 }
 
 export function ConstraintDeck() {
-  const { constraints: c, vetoes, place, inventory } = useGenie();
+  const { constraints: c, vetoes, place, searching, notice } = useGenie();
   const [newVeto, setNewVeto] = useState("");
   const [where, setWhere] = useState("");
 
@@ -211,10 +211,10 @@ export function ConstraintDeck() {
       >
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <span className="text-xs text-muted-foreground">Tonight you are in</span>
-          {inventory.loading ? <span className="font-mono text-[10px] text-primary dg-live-dot">loading…</span> : null}
+          {searching ? <span className="font-mono text-[10px] text-primary dg-live-dot">searching…</span> : null}
         </div>
-        <p className="mb-2 truncate font-display text-sm font-semibold text-foreground" title={place.label}>
-          {place.label}
+        <p className="mb-2 truncate font-display text-sm font-semibold text-foreground" title={place?.label ?? ""}>
+          {place?.label ?? "not set"}
         </p>
         <div className="flex gap-2">
           <input
@@ -225,17 +225,26 @@ export function ConstraintDeck() {
           />
           <button
             type="submit"
-            disabled={inventory.loading}
+            disabled={searching}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground disabled:opacity-50"
           >
-            Move
+            Search
           </button>
         </div>
-        {inventory.notice ? (
-          <p className="mt-2 text-[11px] leading-relaxed text-destructive">{inventory.notice}</p>
+        <button
+          type="button"
+          onClick={() => void store.useMyLocation()}
+          disabled={searching}
+          className="mt-2 text-[11px] text-primary underline-offset-4 hover:underline disabled:opacity-50"
+        >
+          or use my location
+        </button>
+        {notice ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-destructive">{notice}</p>
         ) : (
           <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/70">
-            Geocoded with OpenStreetMap, then every venue within about 4 miles is refetched. Anywhere in the world.
+            Anywhere in the world. Nothing about any place is stored: each search queries the sources fresh with your
+            filters compiled in.
           </p>
         )}
       </form>
@@ -385,7 +394,7 @@ function ChecksTable({ checks }: { checks: store.State["checks"] }) {
 }
 
 export function Stage() {
-  const { plan, alternates, checks, considered, booking, thinking, revision, trace, relaxations } = useGenie();
+  const { plan, alternates, checks, considered, booking, searching, revision, trace, relaxations, place, notice, pool } = useGenie();
   const [showTrace, setShowTrace] = useState(false);
 
   if (booking) return <Receipt />;
@@ -395,12 +404,13 @@ export function Stage() {
       <Panel title="The evening" hint="Nothing planned yet.">
         <div className="py-12 text-center">
           <p className="font-display text-lg text-muted-foreground">
-            {thinking ? <span className="dg-shimmer">Composing…</span> : "Say what you want. Once."}
+            {searching ? <span className="dg-shimmer">Searching…</span> : place ? "Say what you want. Once." : "Tell me where you are."}
           </p>
           <p className="mx-auto mt-2 max-w-sm text-xs text-muted-foreground/70">
-            {trace.length
-              ? trace[trace.length - 1]
-              : "Dinner, something after, and somewhere to park, solved together, not one tab at a time."}
+            {notice ??
+              (trace.length
+                ? trace[trace.length - 1]
+                : "Dinner, something after, and somewhere to park, solved together, not one tab at a time.")}
           </p>
         </div>
       </Panel>
@@ -410,7 +420,7 @@ export function Stage() {
   return (
     <Panel
       title="The evening"
-      hint={`One plan, not ten links. ${considered} combinations were evaluated; this is the only kind that survived.`}
+      hint={`One plan, not ten links. ${pool ? `${pool.restaurants.length} restaurants and ${pool.events.length} venues came back live, then ` : ""}${considered} combinations were evaluated.`}
       right={
         <div className="text-right">
           <div className="font-display text-2xl font-bold text-primary">{money(plan.total)}</div>
@@ -688,7 +698,8 @@ export function ToolConsole() {
 
 export function ToolSurface() {
   const { webmcp } = useGenie();
-  const tools = useMemo(() => allTools(), [webmcp.tools.join("|")]);
+  const signature = webmcp.tools.join("|");
+  const tools = useMemo(() => allTools(), [signature]);
   const [open, setOpen] = useState(false);
 
   return (

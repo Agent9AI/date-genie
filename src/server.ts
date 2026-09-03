@@ -1,5 +1,7 @@
 import "./lib/error-capture";
 
+import { handleApi, type Env } from "./api";
+
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 
@@ -47,6 +49,11 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      // Adapter endpoints are handled here, ahead of the app, so provider keys
+      // stay server-side and responses land in the edge cache.
+      const api = await handleApi(request, (env ?? {}) as Env);
+      if (api) return api;
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

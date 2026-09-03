@@ -11,6 +11,8 @@ config.name = "date-genie";
 config.routes = [{ pattern: "date-genie.agent9.dev", custom_domain: true }];
 // Keep the workers.dev URL alive too, so the submission has a second working link.
 config.workers_dev = true;
+// Workers AI: language understanding at the edge, no API key, free tier.
+config.ai = { binding: "AI" };
 
 writeFileSync(path, JSON.stringify(config, null, 2));
 console.log(`patched ${path}: name=${config.name}, domain=${config.routes[0].pattern}`);

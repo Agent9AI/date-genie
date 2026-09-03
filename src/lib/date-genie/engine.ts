@@ -9,18 +9,14 @@
  */
 import {
   driveBetween,
-  EVENTS,
-  PARKING,
-  RESTAURANTS,
   driveMinutes,
-  eventById,
-  parkingById,
-  restaurantById,
   walkMinutes,
   type EventItem,
+  type LatLng,
   type ParkingSpot,
   type Restaurant,
 } from "./data";
+import type { CandidatePool } from "./sources/types";
 
 /* ------------------------------------------------------------- types ---- */
 
@@ -136,15 +132,18 @@ const matchesAvoid = (haystack: string[], avoid: string[]) =>
 
 /* -------------------------------------------- tool-level primitives ---- */
 
-export function findRestaurants(input: {
-  maxPricePerPerson?: number;
-  maxDriveMinutes?: number;
-  cuisine?: string;
-  earliest?: string;
-  dietary?: string[];
-  avoid?: string[];
-  noise?: string;
-}): Restaurant[] {
+export function filterRestaurants(
+  pool: Restaurant[],
+  input: {
+    maxPricePerPerson?: number;
+    maxDriveMinutes?: number;
+    cuisine?: string;
+    earliest?: string;
+    dietary?: string[];
+    avoid?: string[];
+    noise?: string;
+  },
+): Restaurant[] {
   const {
     maxPricePerPerson = Infinity,
     maxDriveMinutes = 60,
@@ -154,7 +153,7 @@ export function findRestaurants(input: {
     avoid = [],
     noise,
   } = input;
-  return RESTAURANTS.filter((r) => {
+  return pool.filter((r) => {
     if (r.pricePerPerson > maxPricePerPerson) return false;
     if (driveMinutes(r.at) > maxDriveMinutes) return false;
     if (cuisine && !`${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(cuisine.toLowerCase())) return false;
@@ -170,8 +169,7 @@ export function findRestaurants(input: {
   }).sort((a, b) => b.rating - a.rating);
 }
 
-export function checkAvailability(input: { restaurantId: string; earliest?: string; party?: number }) {
-  const r = restaurantById(input.restaurantId);
+export function checkAvailability(r: Restaurant | undefined, input: { earliest?: string; party?: number }) {
   if (!r) return { available: false, slots: [] as string[], reason: "Unknown restaurant" };
   const slots = r.slots.filter((s) => toMinutes(s) >= toMinutes(input.earliest ?? "00:00"));
   return {
@@ -183,14 +181,17 @@ export function checkAvailability(input: { restaurantId: string; earliest?: stri
   };
 }
 
-export function searchEvents(input: {
-  category?: string;
-  earliest?: string;
-  latestEnd?: string;
-  maxPricePerTicket?: number;
-  maxDriveMinutes?: number;
-  avoid?: string[];
-}): EventItem[] {
+export function filterEvents(
+  pool: EventItem[],
+  input: {
+    category?: string;
+    earliest?: string;
+    latestEnd?: string;
+    maxPricePerTicket?: number;
+    maxDriveMinutes?: number;
+    avoid?: string[];
+  },
+): EventItem[] {
   const {
     category,
     earliest = "00:00",
@@ -199,7 +200,7 @@ export function searchEvents(input: {
     maxDriveMinutes = 60,
     avoid = [],
   } = input;
-  return EVENTS.filter((e) => {
+  return pool.filter((e) => {
     if (category && e.category !== category.toLowerCase()) return false;
     if (toMinutes(e.start) < toMinutes(earliest)) return false;
     if (toMinutes(e.start) + e.durationMinutes > toMinutes(latestEnd)) return false;
@@ -210,14 +211,10 @@ export function searchEvents(input: {
   }).sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
 }
 
-export function findParking(input: { nearRestaurantId?: string; nearEventId?: string; maxWalkMinutes?: number }) {
-  const anchor = input.nearRestaurantId
-    ? restaurantById(input.nearRestaurantId)?.at
-    : input.nearEventId
-      ? eventById(input.nearEventId)?.at
-      : undefined;
+export function findParkingNear(pool: ParkingSpot[], anchor: LatLng | undefined, input: { maxWalkMinutes?: number } = {}) {
   if (!anchor) return [];
-  return PARKING.map((p) => ({ ...p, walkMinutes: walkMinutes(anchor, p.at) }))
+  return pool
+    .map((p) => ({ ...p, walkMinutes: walkMinutes(anchor, p.at) }))
     .filter((p) => p.walkMinutes <= (input.maxWalkMinutes ?? 12) && p.spacesLeft > 0)
     .sort((a, b) => a.priceForEvening - b.priceForEvening || a.walkMinutes - b.walkMinutes);
 }
@@ -271,17 +268,17 @@ function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot,
  * which is the point: the answer is provably the best one under the constraints,
  * not the first one that looked fine.
  */
-export function planDateNight(c: Constraints): PlanResult {
+export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
   const trace: string[] = [];
   const rejected: Record<string, number> = {};
   const bump = (k: string) => (rejected[k] = (rejected[k] ?? 0) + 1);
   let considered = 0;
 
   const cuisineHint = c.interests.find((i) =>
-    RESTAURANTS.some((r) => `${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(i)),
+    pool.restaurants.some((r) => `${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(i)),
   );
 
-  const restaurants = findRestaurants({
+  const restaurants = filterRestaurants(pool.restaurants, {
     maxDriveMinutes: c.maxDriveMinutes,
     earliest: c.earliest,
     dietary: c.dietary,
@@ -290,23 +287,23 @@ export function planDateNight(c: Constraints): PlanResult {
     ...(c.noisePreference ? { noise: c.noisePreference } : {}),
   });
   trace.push(
-    `find_restaurants → ${restaurants.length} of ${RESTAURANTS.length} pass drive ≤${c.maxDriveMinutes}m${
+    `filter → ${restaurants.length} of ${pool.restaurants.length} returned by the sources pass drive ≤${c.maxDriveMinutes}m${
       c.dietary.length ? `, ${c.dietary.join("/")}` : ""
     }${c.avoid.length ? `, avoiding ${c.avoid.join("/")}` : ""}`,
   );
 
-  const events = searchEvents({
+  const events = filterEvents(pool.events, {
     earliest: c.earliest,
     latestEnd: c.latestEnd,
     maxDriveMinutes: c.maxDriveMinutes,
     avoid: c.avoid,
   });
-  trace.push(`search_events → ${events.length} of ${EVENTS.length} start after ${fmtTime(c.earliest)} and end by ${fmtTime(c.latestEnd)}`);
+  trace.push(`filter → ${events.length} of ${pool.events.length} events start after ${fmtTime(c.earliest)} and end by ${fmtTime(c.latestEnd)}`);
 
   const candidates: Plan[] = [];
 
   for (const r of restaurants) {
-    const avail = checkAvailability({ restaurantId: r.id, earliest: c.earliest, party: c.party });
+    const avail = checkAvailability(r, { earliest: c.earliest, party: c.party });
     if (!avail.available) {
       bump("no table after your earliest time");
       continue;
@@ -338,9 +335,7 @@ export function planDateNight(c: Constraints): PlanResult {
         }
         // Walking to the event means one lot by dinner. Driving means you move
         // the car, so park where you will actually leave it: at the event.
-        const spots = hop.mode === "walk"
-          ? findParking({ nearRestaurantId: r.id, maxWalkMinutes: 10 })
-          : findParking({ nearEventId: e.id, maxWalkMinutes: 10 });
+        const spots = findParkingNear(pool.parking, hop.mode === "walk" ? r.at : e.at, { maxWalkMinutes: 10 });
         const spot = spots[0];
         if (!spot) {
           bump("no parking within a 10 min walk");
@@ -486,8 +481,8 @@ export type RelaxedResult = PlanResult & { relaxations: Relaxation[] };
  * Plan strictly first. Only if that finds nothing, widen the single constraint
  * that did the most blocking, and try again, up to three times.
  */
-export function planWithRelaxation(c: Constraints, maxSteps = 3): RelaxedResult {
-  let attempt = planDateNight(c);
+export function planWithRelaxation(c: Constraints, pool: CandidatePool, maxSteps = 3): RelaxedResult {
+  let attempt = planDateNight(c, pool);
   if (attempt.plan) return { ...attempt, relaxations: [] };
 
   const relaxations: Relaxation[] = [];
@@ -514,7 +509,7 @@ export function planWithRelaxation(c: Constraints, maxSteps = 3): RelaxedResult 
     if (!widened) break;
     current = widened.next;
     relaxations.push(widened.note);
-    attempt = planDateNight(current);
+    attempt = planDateNight(current, pool);
     if (attempt.plan) {
       attempt.trace.push(`relaxed ${relaxations.map((r) => `${r.label} ${r.from} to ${r.to}`).join(", ")} to find this`);
       return { ...attempt, relaxations };
@@ -628,35 +623,28 @@ export type Booking = {
 
 const code = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 
-export function reserveTable(input: { restaurantId: string; time: string; party: number }) {
-  const r = restaurantById(input.restaurantId);
-  if (!r) return { ok: false as const, error: `Unknown restaurant "${input.restaurantId}"` };
+export function reserveTable(r: Restaurant | undefined, input: { time: string; party: number }) {
+  if (!r) return { ok: false as const, error: "Unknown restaurant" };
   if (!r.slots.includes(input.time))
     return { ok: false as const, error: `${r.name} has no ${fmtTime(input.time)} slot. Open: ${r.slots.map(fmtTime).join(", ")}` };
   return { ok: true as const, confirmation: code("TBL"), restaurant: r.name, time: input.time, party: input.party };
 }
 
-export function reserveTickets(input: { eventId: string; quantity: number }) {
-  const e = eventById(input.eventId);
-  if (!e) return { ok: false as const, error: `Unknown event "${input.eventId}"` };
+export function reserveTickets(e: EventItem | undefined, input: { quantity: number }) {
+  if (!e) return { ok: false as const, error: "Unknown event" };
   if (e.seatsLeft < input.quantity) return { ok: false as const, error: `Only ${e.seatsLeft} seats left` };
   return { ok: true as const, confirmation: code("TIX"), event: e.name, quantity: input.quantity, start: e.start };
 }
 
-export function reserveSpot(input: { parkingId: string; arriveBy: string }) {
-  const p = parkingById(input.parkingId);
-  if (!p) return { ok: false as const, error: `Unknown lot "${input.parkingId}"` };
+export function reserveSpot(p: ParkingSpot | undefined, input: { arriveBy: string }) {
+  if (!p) return { ok: false as const, error: "Unknown lot" };
   return { ok: true as const, confirmation: code("PRK"), lot: p.name, arriveBy: input.arriveBy };
 }
 
 export function bookPlan(plan: Plan, approvalId: string): Booking {
-  const table = reserveTable({
-    restaurantId: plan.dinner.restaurant.id,
-    time: plan.dinner.time,
-    party: plan.constraints.party,
-  });
-  const tickets = reserveTickets({ eventId: plan.event.event.id, quantity: plan.constraints.party });
-  const parking = reserveSpot({ parkingId: plan.parking.spot.id, arriveBy: plan.legs[0]!.start });
+  const table = reserveTable(plan.dinner.restaurant, { time: plan.dinner.time, party: plan.constraints.party });
+  const tickets = reserveTickets(plan.event.event, { quantity: plan.constraints.party });
+  const parking = reserveSpot(plan.parking.spot, { arriveBy: plan.legs[0]!.start });
 
   return {
     confirmation: code("GENIE"),

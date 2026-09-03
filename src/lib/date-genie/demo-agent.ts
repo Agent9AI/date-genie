@@ -40,7 +40,7 @@ export async function runDemoAgent(request: string): Promise<void> {
     await say("Reading the page before I ask you anything…", 700);
     await callTool("get_date_context", {}, "demo");
 
-    await say("Composing an evening that satisfies all of it at once…", 750);
+    await say("Searching every source live for that town…", 750);
     const planned = await callTool("plan_date_night", { request }, "demo");
     if ((planned as { isError?: boolean }).isError) {
       await say("Nothing fits those constraints. Loosen one and ask me again.", 400);
@@ -86,9 +86,14 @@ export async function runObjectionDemo(dislike: string): Promise<void> {
   }
 }
 
+/**
+ * Every sample names a different city on purpose. There is no home town in this
+ * app, and the fastest way to show that is to have the first click land
+ * somewhere, then the next click land somewhere else entirely.
+ */
 export const SAMPLE_REQUESTS = [
-  "Plan something fun for me and my girlfriend Friday night. Keep everything under $180. We're in Arlington, don't make us drive more than 20 minutes, and nothing before 7.",
-  "Cheap date night, under $90, vegetarian, and we want to be home by 11.",
-  "Something quiet where we can actually talk, then live music. Under $200, nothing before 7:30.",
-  "It's our anniversary. Under $260, somewhere nice, no seafood, and a show after.",
+  "Plan something fun for me and my girlfriend Friday night in Arlington, VA. Keep everything under $180, don't make us drive more than 20 minutes, and nothing before 7.",
+  "Cheap date night in Asheville, NC. Under $90, vegetarian, and we want to be home by 11.",
+  "Something quiet in Savannah, GA where we can actually talk, then live music. Under $200, nothing before 7:30.",
+  "It's our anniversary, we're in Burlington, VT. Under $260, somewhere nice, no seafood, and a show after.",
 ];
