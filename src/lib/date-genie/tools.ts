@@ -22,6 +22,7 @@ import {
   fmtTime,
   money,
   parseRequest,
+  extractLocation,
   refineConstraints,
   searchEvents,
   toMinutes,
@@ -133,9 +134,10 @@ export function buildTools(): DateGenieTool[] {
         const c = s.constraints;
         const inv = s.inventory;
         const bits = [
+          `Location: ${s.place.label}. Change it with set_location if the human names anywhere else.`,
           inv.source === "openstreetmap"
-            ? `Inventory: ${inv.restaurants} real Arlington restaurants and ${inv.parking} real parking lots, fetched live from OpenStreetMap. Names, locations, cuisines and diet tags are real; prices, ratings and table availability are simulated.`
-            : `Inventory: ${inv.restaurants} curated seed restaurants (OpenStreetMap unavailable).`,
+            ? `Inventory: ${inv.restaurants} restaurants, ${inv.events} event venues and ${inv.parking} parking facilities within about 4 miles, fetched live from OpenStreetMap. Names, locations, cuisines and diet tags are real; prices, ratings, showtimes and availability are simulated.`
+            : `Inventory: ${inv.restaurants} curated Arlington seed venues (live lookup unavailable${inv.notice ? `: ${inv.notice}` : ""}).`,
           `Budget ceiling ${money(c.budget)} for a party of ${c.party}.`,
           `Nothing before ${fmtTime(c.earliest)}, home by ${fmtTime(c.latestEnd)}.`,
           `Drive at most ${c.maxDriveMinutes} min from home, walk at most ${c.maxWalkMinutes} min between stops.`,
@@ -155,6 +157,7 @@ export function buildTools(): DateGenieTool[] {
           booked: !!s.booking,
           approval: s.approval.status,
           inventory: s.inventory,
+          place: s.place,
         });
       },
     },
@@ -273,6 +276,16 @@ export function buildTools(): DateGenieTool[] {
         const request = String(a["request"] ?? "").trim();
         if (!request) return fail("Pass the human's request as `request`. Their exact words are better than your summary.");
         store.set({ utterance: request, thinking: true });
+
+        // If they named a town, move there before planning. Nothing in this app
+        // is pinned to one city, so "we're in Fredericksburg" actually works.
+        const named = extractLocation(request);
+        let moved = "";
+        if (named && !store.getState().place.label.toLowerCase().startsWith(named.split(",")[0]!.toLowerCase())) {
+          const res = await store.setLocation(named);
+          if (res.ok && res.place) moved = `Moved to ${res.place.label} and reloaded every venue from OpenStreetMap.\n\n`;
+          else moved = `${res.error ?? `Could not move to ${named}.`} Planning with the current location instead.\n\n`;
+        }
         const parsed = parseRequest(request, { ...DEFAULT_CONSTRAINTS, avoid: store.getState().vetoes });
         store.replan(parsed);
         store.set({ thinking: false });
@@ -285,9 +298,34 @@ export function buildTools(): DateGenieTool[] {
           );
         }
         const alt = s.alternates.map((p, i) => `Alternate ${i + 1}: ${p.dinner.restaurant.name} + ${p.event.event.name}, ${money(p.total)} (planId ${p.id})`);
+        const widened = s.relaxations.length
+          ? `Heads up: nothing fit their exact constraints here, so I widened ${s.relaxations
+              .map((r) => `${r.label} from ${r.from} to ${r.to}`)
+              .join(" and ")}. Tell the human this plainly rather than presenting it as an exact match.\n\n`
+          : "";
         return ok(
-          `Booked-shaped and on screen now. The human can see this.\n\n${planSummary(s.plan)}\n\nWhy: ${s.plan.why.join("; ")}.\nChecked ${s.considered} combinations; every constraint holds.\n${alt.length ? "\n" + alt.join("\n") : ""}\n\nNext: call request_approval to ask the human to confirm. Do NOT book without it.`,
+          `${moved}${widened}Booked-shaped and on screen now. The human can see this.\n\n${planSummary(s.plan)}\n\nWhy: ${s.plan.why.join("; ")}.\nChecked ${s.considered} combinations; every constraint holds.\n${alt.length ? "\n" + alt.join("\n") : ""}\n\nNext: call request_approval to ask the human to confirm. Do NOT book without it.`,
           { plan: planPayload(s.plan), alternates: s.alternates.map(planPayload), checks: s.checks, constraints: s.constraints, considered: s.considered },
+        );
+      },
+    },
+
+    {
+      name: "set_location",
+      description:
+        "Move the whole app to a different town or neighbourhood. Geocodes the place with OpenStreetMap and reloads every restaurant, event venue and parking facility around it, then re-plans. Use this the moment the human names somewhere other than where the page currently is. Works anywhere in the world.",
+      inputSchema: obj({ place: str("Any place name, e.g. 'Fredericksburg, VA', 'Shoreditch, London'") }, ["place"]),
+      annotations: { title: "Change location", readOnlyHint: false },
+      execute: async (a) => {
+        const query = String(a["place"] ?? "").trim();
+        if (!query) return fail("Pass a place name, e.g. 'Fredericksburg, VA'.");
+        const res = await store.setLocation(query);
+        if (!res.ok) return fail(res.error ?? `Could not move to ${query}.`);
+        const inv = store.getState().inventory;
+        const after = store.getState().plan;
+        return ok(
+          `Now in ${res.place!.label}. Loaded ${inv.restaurants} restaurants, ${inv.events} event venues and ${inv.parking} parking facilities from OpenStreetMap, all within about 4 miles.${after ? `\n\nRe-planned:\n${planSummary(after)}` : "\n\nNo plan on screen yet. Call plan_date_night."}`,
+          { place: res.place, inventory: inv },
         );
       },
     },
@@ -332,6 +370,7 @@ export function buildTools(): DateGenieTool[] {
         party: num("How many people"),
         maxDriveMinutes: num("Max drive from home"),
         maxWalkMinutes: num("Max walk between stops"),
+        maxHopDriveMinutes: num("Max drive between dinner and the event, when they are too far to walk"),
       }),
       annotations: { title: "Set a constraint", readOnlyHint: false, idempotentHint: true },
       execute: async (a) => {
@@ -344,6 +383,7 @@ export function buildTools(): DateGenieTool[] {
         if (a["party"] !== undefined) { next.party = Number(a["party"]); changed.push(`party of ${next.party}`); }
         if (a["maxDriveMinutes"] !== undefined) { next.maxDriveMinutes = Number(a["maxDriveMinutes"]); changed.push(`drive ≤ ${next.maxDriveMinutes} min`); }
         if (a["maxWalkMinutes"] !== undefined) { next.maxWalkMinutes = Number(a["maxWalkMinutes"]); changed.push(`walk ≤ ${next.maxWalkMinutes} min`); }
+        if (a["maxHopDriveMinutes"] !== undefined) { next.maxHopDriveMinutes = Number(a["maxHopDriveMinutes"]); changed.push(`drive between stops ≤ ${next.maxHopDriveMinutes} min`); }
         if (!changed.length) return fail("Pass at least one constraint to change.");
         store.replan(next);
         const after = store.getState().plan;

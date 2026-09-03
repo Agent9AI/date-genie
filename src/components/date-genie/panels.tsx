@@ -72,7 +72,7 @@ export function StatusPill() {
         ) : osm ? (
           <>
             <span className="size-1.5 rounded-full bg-accent" aria-hidden />
-            {inventory.restaurants} real venues, live from OpenStreetMap
+            {inventory.restaurants} venues live from OpenStreetMap
           </>
         ) : (
           <>{inventory.restaurants} seed venues</>
@@ -189,8 +189,9 @@ function Dial({
 }
 
 export function ConstraintDeck() {
-  const { constraints: c, vetoes } = useGenie();
+  const { constraints: c, vetoes, place, inventory } = useGenie();
   const [newVeto, setNewVeto] = useState("");
+  const [where, setWhere] = useState("");
 
   const patch = useCallback((next: Partial<typeof c>) => store.replan({ ...c, ...next }), [c]);
 
@@ -199,6 +200,46 @@ export function ConstraintDeck() {
       title="Your rules"
       hint="Set these with your thumb. Your agent reads every value here before it asks you a single question."
     >
+      <form
+        className="mb-4 border-b border-border pb-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!where.trim()) return;
+          void callTool("set_location", { place: where.trim() }, "you");
+          setWhere("");
+        }}
+      >
+        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Tonight you are in</span>
+          {inventory.loading ? <span className="font-mono text-[10px] text-primary dg-live-dot">loading…</span> : null}
+        </div>
+        <p className="mb-2 truncate font-display text-sm font-semibold text-foreground" title={place.label}>
+          {place.label}
+        </p>
+        <div className="flex gap-2">
+          <input
+            value={where}
+            onChange={(e) => setWhere(e.target.value)}
+            placeholder="Fredericksburg, VA"
+            className="min-w-0 flex-1 rounded-lg border border-input bg-ink/60 px-3 py-1.5 text-xs outline-none focus:border-primary/70"
+          />
+          <button
+            type="submit"
+            disabled={inventory.loading}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground disabled:opacity-50"
+          >
+            Move
+          </button>
+        </div>
+        {inventory.notice ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-destructive">{inventory.notice}</p>
+        ) : (
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/70">
+            Geocoded with OpenStreetMap, then every venue within about 4 miles is refetched. Anywhere in the world.
+          </p>
+        )}
+      </form>
+
       <div className="space-y-4">
         <Dial label="Whole evening, all in" value={c.budget} display={money(c.budget)} min={40} max={400} step={5} onChange={(budget) => patch({ budget })} />
         <Dial
@@ -344,7 +385,7 @@ function ChecksTable({ checks }: { checks: store.State["checks"] }) {
 }
 
 export function Stage() {
-  const { plan, alternates, checks, considered, booking, thinking, revision, trace } = useGenie();
+  const { plan, alternates, checks, considered, booking, thinking, revision, trace, relaxations } = useGenie();
   const [showTrace, setShowTrace] = useState(false);
 
   if (booking) return <Receipt />;
@@ -384,6 +425,20 @@ export function Stage() {
           <Leg key={`${leg.kind}-${leg.id}-${revision}`} leg={leg} index={i} />
         ))}
       </ol>
+
+      {relaxations.length ? (
+        <p className="mt-1 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs leading-relaxed text-foreground">
+          <span className="font-semibold">Not an exact match. </span>
+          Nothing here fit your exact rules, so the genie widened{" "}
+          {relaxations.map((r, i) => (
+            <span key={r.label}>
+              {i > 0 ? " and " : ""}
+              <span className="text-primary">{r.label}</span> from {r.from} to {r.to}
+            </span>
+          ))}
+          . Everything else still holds.
+        </p>
+      ) : null}
 
       <p className="mt-1 rounded-lg border border-border bg-ink/40 px-3 py-2 text-xs text-muted-foreground">
         <span className="text-foreground">Why this one: </span>

@@ -8,6 +8,7 @@
  * its work rather than asking anyone to trust it.
  */
 import {
+  driveBetween,
   EVENTS,
   PARKING,
   RESTAURANTS,
@@ -32,6 +33,12 @@ export type Constraints = {
   latestEnd: string;
   maxDriveMinutes: number;
   maxWalkMinutes: number;
+  /**
+   * If dinner and the event are further apart than maxWalkMinutes, you drive.
+   * Assuming everyone walks everywhere is a dense-downtown assumption that
+   * makes the planner useless in most of the country.
+   */
+  maxHopDriveMinutes: number;
   party: number;
   /** Positive signals: cuisines, categories, vibes. */
   interests: string[];
@@ -48,6 +55,7 @@ export const DEFAULT_CONSTRAINTS: Constraints = {
   latestEnd: "23:59",
   maxDriveMinutes: 20,
   maxWalkMinutes: 12,
+  maxHopDriveMinutes: 15,
   party: 2,
   interests: [],
   avoid: [],
@@ -67,11 +75,14 @@ export type PlanLeg = {
   detail: string;
 };
 
+/** How you get from dinner to the event. */
+export type Hop = { mode: "walk" | "drive"; minutes: number };
+
 export type Plan = {
   id: string;
   legs: PlanLeg[];
   dinner: { restaurant: Restaurant; time: string; cost: number };
-  event: { event: EventItem; cost: number; walkMinutes: number };
+  event: { event: EventItem; cost: number; walkMinutes: number; hop: Hop };
   parking: { spot: ParkingSpot; cost: number; walkMinutes: number };
   total: number;
   score: number;
@@ -213,7 +224,7 @@ export function findParking(input: { nearRestaurantId?: string; nearEventId?: st
 
 /* ------------------------------------------------------------ planner ---- */
 
-function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot, c: Constraints, walk: number, parkWalk: number): PlanLeg[] {
+function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot, c: Constraints, hop: Hop, parkWalk: number): PlanLeg[] {
   const dinnerEnd = fromMinutes(toMinutes(time) + mealMinutes(r));
   return [
     {
@@ -244,7 +255,7 @@ function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot,
       kind: "event",
       id: e.id,
       title: e.name,
-      subtitle: `${e.venue} · ${walk} min walk from dinner`,
+      subtitle: `${e.venue} · ${hop.minutes} min ${hop.mode === "walk" ? "walk" : "drive"} from dinner`,
       start: e.start,
       end: fromMinutes(toMinutes(e.start) + e.durationMinutes),
       cost: e.pricePerTicket * c.party,
@@ -304,12 +315,19 @@ export function planDateNight(c: Constraints): PlanResult {
       for (const e of events) {
         considered++;
         const walk = walkMinutes(r.at, e.at);
-        if (walk > c.maxWalkMinutes) {
-          bump(`>${c.maxWalkMinutes} min walk between dinner and the event`);
+        const drive = driveBetween(r.at, e.at);
+        const hop: Hop | null =
+          walk <= c.maxWalkMinutes
+            ? { mode: "walk", minutes: walk }
+            : drive <= c.maxHopDriveMinutes
+              ? { mode: "drive", minutes: drive }
+              : null;
+        if (!hop) {
+          bump(`more than a ${c.maxWalkMinutes} min walk or a ${c.maxHopDriveMinutes} min drive between dinner and the event`);
           continue;
         }
         const eatUntil = toMinutes(time) + mealMinutes(r);
-        const slack = toMinutes(e.start) - eatUntil - walk;
+        const slack = toMinutes(e.start) - eatUntil - hop.minutes;
         if (slack < 0) {
           bump("not enough time to finish dinner");
           continue;
@@ -318,7 +336,11 @@ export function planDateNight(c: Constraints): PlanResult {
           bump("a dead hour between dinner and the event");
           continue;
         }
-        const spots = findParking({ nearRestaurantId: r.id, maxWalkMinutes: 10 });
+        // Walking to the event means one lot by dinner. Driving means you move
+        // the car, so park where you will actually leave it: at the event.
+        const spots = hop.mode === "walk"
+          ? findParking({ nearRestaurantId: r.id, maxWalkMinutes: 10 })
+          : findParking({ nearEventId: e.id, maxWalkMinutes: 10 });
         const spot = spots[0];
         if (!spot) {
           bump("no parking within a 10 min walk");
@@ -334,25 +356,30 @@ export function planDateNight(c: Constraints): PlanResult {
           continue;
         }
 
+        // A national chain is a fine dinner and a poor date. Only surface one
+        // when the human asked for cheap, or nothing independent fits.
+        const chainPenalty = r.tags.includes("chain") ? 1.4 : 0;
+        // A walkable evening is genuinely nicer than a drive between courses.
+        const hopPenalty = hop.mode === "walk" ? hop.minutes / 18 : 0.6 + hop.minutes / 14;
         const interestBoost = c.interests.includes(e.category) ? 1.6 : 0;
         const cuisineBoost = c.interests.some((i) => r.cuisine.toLowerCase().includes(i)) ? 1.2 : 0;
         const headroom = (c.budget - total) / c.budget; // reward leaving money on the table
         const pacing = 1 - Math.abs(slack - 20) / 60; // ~20 min of slack feels right
         const score =
-          r.rating * 1.6 + interestBoost + cuisineBoost + headroom * 0.45 + pacing * 1.1 - walk / 18 - spot.walkMinutes / 30;
+          r.rating * 1.6 + interestBoost + cuisineBoost + headroom * 0.45 + pacing * 1.1 - hopPenalty - chainPenalty - spot.walkMinutes / 30;
 
         const why: string[] = [];
         if (cuisineBoost) why.push(`${r.cuisine} was on your list`);
         if (interestBoost) why.push(`you asked for ${e.category}`);
-        why.push(`${walk} min walk between the two`);
+        why.push(`${hop.minutes} min ${hop.mode} between the two`);
         why.push(`${money(c.budget - total)} left over`);
         if (slack >= 10 && slack <= 35) why.push("time for a drink in between");
 
         candidates.push({
           id: `${r.id}__${time}__${e.id}`,
-          legs: buildLegs(r, time, e, spot, c, walk, spot.walkMinutes),
+          legs: buildLegs(r, time, e, spot, c, hop, spot.walkMinutes),
           dinner: { restaurant: r, time, cost: r.pricePerPerson * c.party },
-          event: { event: e, cost: e.pricePerTicket * c.party, walkMinutes: walk },
+          event: { event: e, cost: e.pricePerTicket * c.party, walkMinutes: hop.minutes, hop },
           parking: { spot, cost: spot.priceForEvening, walkMinutes: spot.walkMinutes },
           total,
           score,
@@ -388,6 +415,114 @@ export function planDateNight(c: Constraints): PlanResult {
   return { plan, alternates, checks: checkPlan(plan, c), trace, considered, rejected };
 }
 
+/**
+ * A dense downtown and a spread-out small town need different rules. Rather
+ * than hand back "nothing found" and make the human guess which of their six
+ * constraints was the problem, work out which one actually did the blocking,
+ * widen that one, and say so out loud. Never silently widen budget: spending
+ * more of someone's money is not a detail to bury.
+ */
+export type Relaxation = { label: string; from: string; to: string };
+
+const RELAXATION_LADDER: {
+  test: (blocker: string) => boolean;
+  apply: (c: Constraints) => { next: Constraints; note: Relaxation } | null;
+}[] = [
+  {
+    test: (b) => b.includes("walk"),
+    apply: (c) =>
+      c.maxWalkMinutes >= 30
+        ? null
+        : {
+            next: { ...c, maxWalkMinutes: Math.min(30, c.maxWalkMinutes + 10) },
+            note: { label: "walk between stops", from: `${c.maxWalkMinutes} min`, to: `${Math.min(30, c.maxWalkMinutes + 10)} min` },
+          },
+  },
+  {
+    test: (b) => b.includes("drive between dinner"),
+    apply: (c) =>
+      c.maxHopDriveMinutes >= 35
+        ? null
+        : {
+            next: { ...c, maxHopDriveMinutes: Math.min(35, c.maxHopDriveMinutes + 10) },
+            note: { label: "drive between stops", from: `${c.maxHopDriveMinutes} min`, to: `${Math.min(35, c.maxHopDriveMinutes + 10)} min` },
+          },
+  },
+  {
+    // You cannot finish dinner before an 8pm show by staying out later. You
+    // have to sit down earlier.
+    test: (b) => b.includes("finish dinner"),
+    apply: (c) => {
+      const earlier = fromMinutes(Math.max(16 * 60, toMinutes(c.earliest) - 45));
+      return { next: { ...c, earliest: earlier }, note: { label: "nothing before", from: fmtTime(c.earliest), to: fmtTime(earlier) } };
+    },
+  },
+  {
+    test: (b) => b.includes("dead hour"),
+    apply: (c) => {
+      const later = fromMinutes(Math.min(24 * 60 - 1, toMinutes(c.latestEnd) + 60));
+      return { next: { ...c, latestEnd: later }, note: { label: "home by", from: fmtTime(c.latestEnd), to: fmtTime(later) } };
+    },
+  },
+  {
+    test: (b) => b.includes("parking"),
+    apply: (c) => ({ next: c, note: { label: "parking", from: "within 10 min", to: "street parking allowed" } }),
+  },
+  {
+    test: (b) => b.includes("drive"),
+    apply: (c) =>
+      c.maxDriveMinutes >= 60
+        ? null
+        : {
+            next: { ...c, maxDriveMinutes: Math.min(60, c.maxDriveMinutes + 15) },
+            note: { label: "drive from home", from: `${c.maxDriveMinutes} min`, to: `${Math.min(60, c.maxDriveMinutes + 15)} min` },
+          },
+  },
+];
+
+export type RelaxedResult = PlanResult & { relaxations: Relaxation[] };
+
+/**
+ * Plan strictly first. Only if that finds nothing, widen the single constraint
+ * that did the most blocking, and try again, up to three times.
+ */
+export function planWithRelaxation(c: Constraints, maxSteps = 3): RelaxedResult {
+  let attempt = planDateNight(c);
+  if (attempt.plan) return { ...attempt, relaxations: [] };
+
+  const relaxations: Relaxation[] = [];
+  const exhausted = new Set<number>();
+  let current = c;
+
+  for (let step = 0; step < maxSteps; step++) {
+    // Work down the blockers, biggest first, skipping any rule that has already
+    // hit its ceiling. Without this the loop re-applies a no-op forever and
+    // reports "11:59 PM to 11:59 PM" as if it had done something.
+    const blockers = Object.entries(attempt.rejected).sort((a, b) => b[1] - a[1]);
+    let widened: { next: Constraints; note: Relaxation } | null = null;
+    for (const [blocker] of blockers) {
+      const index = RELAXATION_LADDER.findIndex((r, i) => !exhausted.has(i) && r.test(blocker));
+      if (index === -1) continue;
+      const candidate = RELAXATION_LADDER[index]!.apply(current);
+      if (!candidate || candidate.note.from === candidate.note.to) {
+        exhausted.add(index);
+        continue;
+      }
+      widened = candidate;
+      break;
+    }
+    if (!widened) break;
+    current = widened.next;
+    relaxations.push(widened.note);
+    attempt = planDateNight(current);
+    if (attempt.plan) {
+      attempt.trace.push(`relaxed ${relaxations.map((r) => `${r.label} ${r.from} to ${r.to}`).join(", ")} to find this`);
+      return { ...attempt, relaxations };
+    }
+  }
+  return { ...attempt, relaxations };
+}
+
 /** The receipt that proves every stated constraint actually holds. */
 export function checkPlan(plan: Plan | null, c: Constraints): CheckRow[] {
   if (!plan) return [];
@@ -404,10 +539,13 @@ export function checkPlan(plan: Plan | null, c: Constraints): CheckRow[] {
     { label: "Home by", target: fmtTime(c.latestEnd), actual: fmtTime(fromMinutes(endsAt)), ok: endsAt <= toMinutes(c.latestEnd) },
     { label: "Drive from home", target: `≤ ${c.maxDriveMinutes} min`, actual: `${maxDrive} min`, ok: maxDrive <= c.maxDriveMinutes },
     {
-      label: "Walk between stops",
-      target: `≤ ${c.maxWalkMinutes} min`,
-      actual: `${plan.event.walkMinutes} min`,
-      ok: plan.event.walkMinutes <= c.maxWalkMinutes,
+      label: plan.event.hop.mode === "walk" ? "Walk between stops" : "Drive between stops",
+      target: plan.event.hop.mode === "walk" ? `≤ ${c.maxWalkMinutes} min walk` : `≤ ${c.maxHopDriveMinutes} min drive`,
+      actual: `${plan.event.hop.minutes} min`,
+      ok:
+        plan.event.hop.mode === "walk"
+          ? plan.event.hop.minutes <= c.maxWalkMinutes
+          : plan.event.hop.minutes <= c.maxHopDriveMinutes,
     },
     { label: "Party size", target: `${c.party}`, actual: `${c.party} seats held`, ok: plan.event.event.seatsLeft >= c.party },
     ...(c.dietary.length
@@ -553,6 +691,27 @@ export function bookPlan(plan: Plan, approvalId: string): Booking {
 
 const CUISINES = ["korean", "seafood", "oyster", "mexican", "indian", "steak", "japanese", "french", "mediterranean", "salvadoran", "vegan", "noodle"];
 const CATEGORIES = ["comedy", "music", "film", "class", "theater"];
+
+/**
+ * Pull a place name out of the raw request, preserving its capitalisation so
+ * the geocoder gets "Fredericksburg" rather than "fredericksburg". Returns null
+ * when the user did not name anywhere, in which case the current location holds.
+ */
+export function extractLocation(text: string): string | null {
+  const patterns = [
+    /(?:we(?:'| a)?re|i(?:'m| am)|we are)\s+(?:in|near|around|based in)\s+([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2}(?:,\s*[A-Za-z]{2,})?)/,
+    /\b(?:in|near|around)\s+([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2}(?:,\s*[A-Za-z]{2,})?)/,
+  ];
+  const STOPWORDS = /^(Friday|Saturday|Sunday|Monday|Tuesday|Wednesday|Thursday|Keep|Plan|Something|The|My|Our|We|It|A|An|I)$/i;
+  for (const re of patterns) {
+    const m = text.match(re);
+    const raw = m?.[1]?.trim().replace(/[.,;]$/, "");
+    if (!raw) continue;
+    if (STOPWORDS.test(raw.split(/\s+/)[0] ?? "")) continue;
+    return raw;
+  }
+  return null;
+}
 
 export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAINTS): Constraints {
   const t = text.toLowerCase();

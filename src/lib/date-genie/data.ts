@@ -13,8 +13,16 @@
 
 export type LatLng = { lat: number; lng: number };
 
-/** Home base for drive-time estimates: Ballston, Arlington VA. */
+/**
+ * Where the user is tonight. Mutable on purpose: set_location geocodes a real
+ * place name into this object and every drive-time estimate follows it.
+ */
 export const HOME: LatLng = { lat: 38.8816, lng: -77.1117 };
+
+export function setHome(at: LatLng): void {
+  HOME.lat = at.lat;
+  HOME.lng = at.lng;
+}
 
 export type Restaurant = {
   id: string;
@@ -77,7 +85,12 @@ export function walkMinutes(a: LatLng, b: LatLng): number {
 
 /** Driving minutes from home, with an urban-arterial penalty. */
 export function driveMinutes(to: LatLng): number {
-  return Math.max(3, Math.round((milesBetween(HOME, to) / 24) * 60 + 4));
+  return driveBetween(HOME, to);
+}
+
+/** Driving minutes between any two points, including parking and walk-in time. */
+export function driveBetween(a: LatLng, b: LatLng): number {
+  return Math.max(3, Math.round((milesBetween(a, b) / 24) * 60 + 4));
 }
 
 /* -------------------------------------------------------- inventory ---- */
@@ -225,7 +238,7 @@ const SEED_RESTAURANTS: Restaurant[] = [
   },
 ];
 
-export const EVENTS: EventItem[] = [
+const SEED_EVENTS: EventItem[] = [
   {
     id: "e_dry_humor",
     name: "Dry Humor Live",
@@ -358,10 +371,19 @@ const SEED_PARKING: ParkingSpot[] = [
  */
 export const RESTAURANTS: Restaurant[] = [...SEED_RESTAURANTS];
 export const PARKING: ParkingSpot[] = [...SEED_PARKING];
+export const EVENTS: EventItem[] = [...SEED_EVENTS];
 
-export const SEED_COUNTS = { restaurants: SEED_RESTAURANTS.length, parking: SEED_PARKING.length };
+export const SEED_COUNTS = {
+  restaurants: SEED_RESTAURANTS.length,
+  parking: SEED_PARKING.length,
+  events: SEED_EVENTS.length,
+};
 
-export function applyInventory(next: { restaurants: Restaurant[]; parking: ParkingSpot[] }): void {
+export function applyInventory(next: {
+  restaurants: Restaurant[];
+  parking: ParkingSpot[];
+  events: EventItem[];
+}): void {
   if (next.restaurants.length) {
     RESTAURANTS.length = 0;
     RESTAURANTS.push(...next.restaurants);
@@ -370,13 +392,10 @@ export function applyInventory(next: { restaurants: Restaurant[]; parking: Parki
     PARKING.length = 0;
     PARKING.push(...next.parking);
   }
-}
-
-export function restoreSeedInventory(): void {
-  RESTAURANTS.length = 0;
-  RESTAURANTS.push(...SEED_RESTAURANTS);
-  PARKING.length = 0;
-  PARKING.push(...SEED_PARKING);
+  if (next.events.length) {
+    EVENTS.length = 0;
+    EVENTS.push(...next.events);
+  }
 }
 
 export const restaurantById = (id: string) => RESTAURANTS.find((r) => r.id === id);

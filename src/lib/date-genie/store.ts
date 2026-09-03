@@ -9,11 +9,12 @@
  * Deliberately framework-free (a 40-line observable) so the tool layer never
  * imports React and can be lifted into any site.
  */
-import { SEED_COUNTS, applyInventory } from "./data";
-import { fetchLiveVenues } from "./live-venues";
+import { SEED_COUNTS, applyInventory, setHome } from "./data";
+import { fetchLiveVenues, geocode, type Place } from "./live-venues";
 import {
   DEFAULT_CONSTRAINTS,
-  planDateNight,
+  planWithRelaxation,
+  type Relaxation,
   type Booking,
   type CheckRow,
   type Constraints,
@@ -46,6 +47,8 @@ export type State = {
   checks: CheckRow[];
   trace: string[];
   considered: number;
+  /** Constraints the planner had to widen, shown to the human verbatim. */
+  relaxations: Relaxation[];
   calls: ToolCall[];
   approval: ApprovalState;
   booking: Booking | null;
@@ -53,7 +56,18 @@ export type State = {
   vetoes: string[];
   webmcp: { bound: boolean; surface: string; tools: string[]; agentSeen: boolean };
   /** Where the venue inventory came from, so nobody has to guess. */
-  inventory: { source: "seed" | "openstreetmap"; restaurants: number; parking: number; fetchedAt: number | null; loading: boolean };
+  inventory: {
+    source: "seed" | "openstreetmap";
+    restaurants: number;
+    parking: number;
+    events: number;
+    fetchedAt: number | null;
+    loading: boolean;
+    /** Set when a place was named but nothing usable came back. */
+    notice: string | null;
+  };
+  /** Where the user says they are tonight. Drives every query and drive time. */
+  place: Place;
   thinking: boolean;
   /** What the built-in demo agent is currently saying, newest last. */
   narration: string[];
@@ -91,12 +105,22 @@ let state: State = {
   checks: [],
   trace: [],
   considered: 0,
+  relaxations: [],
   calls: [],
   approval: { status: "idle" },
   booking: null,
   vetoes: [],
   webmcp: { bound: false, surface: "none", tools: [], agentSeen: false },
-  inventory: { source: "seed", restaurants: SEED_COUNTS.restaurants, parking: SEED_COUNTS.parking, fetchedAt: null, loading: false },
+  inventory: {
+    source: "seed",
+    restaurants: SEED_COUNTS.restaurants,
+    parking: SEED_COUNTS.parking,
+    events: SEED_COUNTS.events,
+    fetchedAt: null,
+    loading: false,
+    notice: null,
+  },
+  place: { label: "Arlington, Virginia", at: { lat: 38.8816, lng: -77.1117 } },
   thinking: false,
   narration: [],
   demoRunning: false,
@@ -149,7 +173,7 @@ export function removeVeto(term: string) {
 /** Re-run the planner against whatever the constraints currently are. */
 export function replan(c: Constraints = state.constraints): void {
   const merged: Constraints = { ...c, avoid: [...new Set([...c.avoid, ...state.vetoes])] };
-  const result = planDateNight(merged);
+  const result = planWithRelaxation(merged);
   set((s) => ({
     constraints: merged,
     plan: result.plan,
@@ -157,6 +181,7 @@ export function replan(c: Constraints = state.constraints): void {
     checks: result.checks,
     trace: result.trace,
     considered: result.considered,
+    relaxations: result.relaxations,
     // Any change to the plan invalidates a standing approval. Never let an
     // agent get approval for a $164 night and then book a $400 one.
     approval: s.approval.status === "approved" || s.approval.status === "pending" ? { status: "idle" } : s.approval,
@@ -181,24 +206,51 @@ export function patchCall(id: string, patch: Partial<ToolCall>) {
  * Silent no-op on failure: the curated seed inventory stays, and the badge
  * keeps saying "seed" rather than claiming a freshness the app does not have.
  */
-export async function loadLiveInventory(): Promise<void> {
-  set((s) => ({ inventory: { ...s.inventory, loading: true } }));
-  const live = await fetchLiveVenues();
+export async function loadLiveInventory(place: Place = state.place): Promise<boolean> {
+  set((s) => ({ inventory: { ...s.inventory, loading: true, notice: null } }));
+  const live = await fetchLiveVenues(place);
   if (!live) {
-    set((s) => ({ inventory: { ...s.inventory, loading: false } }));
-    return;
+    set((s) => ({
+      inventory: {
+        ...s.inventory,
+        loading: false,
+        notice: `Could not build an evening around ${place.label}. Showing the curated Arlington set instead.`,
+      },
+    }));
+    return false;
   }
   applyInventory(live);
+  setHome(place.at);
   set({
+    place,
     inventory: {
       source: live.source,
       restaurants: live.restaurants.length,
       parking: live.parking.length,
+      events: live.events.length,
       fetchedAt: live.fetchedAt,
       loading: false,
+      notice: null,
     },
   });
   if (state.plan) replan(state.constraints);
+  return true;
+}
+
+/**
+ * Geocode a place name and reload every venue around it. This is what makes
+ * the app work in Fredericksburg, or Lisbon, rather than one hardcoded city.
+ */
+export async function setLocation(query: string): Promise<{ ok: boolean; place?: Place; error?: string }> {
+  set((s) => ({ inventory: { ...s.inventory, loading: true, notice: null } }));
+  const place = await geocode(query);
+  if (!place) {
+    set((s) => ({ inventory: { ...s.inventory, loading: false, notice: `Could not find "${query}" on the map.` } }));
+    return { ok: false, error: `Could not find "${query}". Try adding a state or country, e.g. "Fredericksburg, VA".` };
+  }
+  const ok = await loadLiveInventory(place);
+  if (!ok) return { ok: false, place, error: `Found ${place.label}, but OpenStreetMap had too few venues nearby to compose an evening.` };
+  return { ok: true, place };
 }
 
 /* ------------------------------------------------------ approval gate ---- */

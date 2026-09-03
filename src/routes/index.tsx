@@ -160,9 +160,10 @@ function DateGenie() {
 
       <footer className="mt-10 border-t border-border pt-6 text-xs text-muted-foreground">
         <p>
-          Built for the WebMCP Challenge. Inventory is representative Arlington, VA data standing in for OpenTable,
-          Ticketmaster and SpotHero. The tool contracts and the planner would not change if you swapped it for live
-          feeds. Reservations are simulated; no card is ever charged.
+          Built for the WebMCP Challenge. Restaurants, cinemas, theatres, music venues and parking are fetched live
+          from OpenStreetMap around whatever place you name, anywhere in the world, and every walk and drive time is
+          computed from those real coordinates. Prices, ratings, showtimes and availability are simulated, because no
+          free open dataset carries them. Reservations are simulated; no card is ever charged.
         </p>
         <p className="mt-2">
           Open <code className="font-mono text-foreground">window.dateGenie.listTools()</code> in the console to inspect
