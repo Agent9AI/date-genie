@@ -139,3 +139,65 @@
   font-size: 0.75rem;
   color: var(--color-muted-foreground);
 }
+
+/* ------------------------------------------------ date genie motion ---- */
+
+@keyframes dg-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes dg-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 oklch(0.72 0.17 44 / 0.5); }
+  70%  { box-shadow: 0 0 0 14px oklch(0.72 0.17 44 / 0); }
+  100% { box-shadow: 0 0 0 0 oklch(0.72 0.17 44 / 0); }
+}
+@keyframes dg-sweep {
+  from { background-position: 0% 50%; }
+  to   { background-position: 200% 50%; }
+}
+@keyframes dg-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@utility dg-rise {
+  animation: dg-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@utility dg-live-dot {
+  animation: dg-blink 1.4s ease-in-out infinite;
+}
+@utility dg-pulse {
+  animation: dg-pulse-ring 2s ease-out infinite;
+}
+@utility dg-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-muted-foreground) 20%,
+    var(--color-primary) 45%,
+    var(--color-muted-foreground) 70%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: dg-sweep 2.4s linear infinite;
+}
+@utility dg-rail {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--color-border) 8%,
+    var(--color-border) 92%,
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dg-rise, .dg-live-dot, .dg-pulse, .dg-shimmer { animation: none !important; }
+  .dg-shimmer { color: var(--color-primary); }
+}
+
+/* Keep the console readable when a long JSON blob lands in it. */
+.dg-scroll { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+.dg-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.dg-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; }

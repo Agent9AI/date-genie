@@ -1,42 +1,33 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+
 import {
-  CalendarHeart,
-  Car,
-  CheckCircle2,
-  Clock,
-  Footprints,
-  Sparkles,
-  Ticket,
-  UtensilsCrossed,
-  Wand2,
-} from "lucide-react";
-import {
-  bookPlan,
-  fmtTime,
-  money,
-  parseRequest,
-  planDateNight,
-  type Booking,
-  type Constraints,
-  type Plan,
-} from "@/lib/date-genie/engine";
-import { registerWebMcp, type ToolCallRecord } from "@/lib/date-genie/webmcp";
+  ApprovalSheet,
+  CommandBar,
+  ConstraintDeck,
+  Stage,
+  StatusPill,
+  ToolConsole,
+  ToolSurface,
+  useGenie,
+} from "@/components/date-genie/panels";
+import { SAMPLE_REQUESTS, runDemoAgent } from "@/lib/date-genie/demo-agent";
+import * as store from "@/lib/date-genie/store";
+import { bindWebMcp } from "@/lib/date-genie/webmcp";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Date Genie — Date Night as a Single Command" },
+      { title: "Date Genie: date night as a single command" },
       {
         name: "description",
         content:
-          "Date Genie is a WebMCP tool site: one natural-language command books dinner, tickets and parking. Agents stop recommending your life and start executing it.",
+          "A WebMCP site that stops recommending your evening and starts executing it. Your agent plans dinner, a show and parking as one bookable itinerary, and cannot spend a cent until you press confirm in the page.",
       },
-      { property: "og:title", content: "Date Genie — Date Night as a Single Command" },
+      { property: "og:title", content: "Date Genie: date night as a single command" },
       {
         property: "og:description",
-        content:
-          "One command, one itinerary, one confirmation. WebMCP tools for events, restaurants, parking and tickets.",
+        content: "WebMCP tools that plan and book a whole evening. The agent proposes; the human, in the page, decides.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -45,286 +36,143 @@ export const Route = createFileRoute("/")({
   component: DateGenie,
 });
 
-const EXAMPLE =
-  "Plan something fun for me and my girlfriend Friday night. Keep everything under $180. We're in Arlington, don't make us drive more than 20 minutes, and nothing before 7.";
-
-const TOOL_GROUPS = [
-  { icon: CalendarHeart, label: "Events", tools: ["search_events"] },
-  { icon: UtensilsCrossed, label: "Restaurants", tools: ["find_restaurants", "check_availability", "reserve_table"] },
-  { icon: Car, label: "Parking", tools: ["find_parking", "reserve_spot"] },
-  { icon: Ticket, label: "Tickets", tools: ["reserve_tickets"] },
-];
-
-function DateGenie() {
-  const [input, setInput] = useState(EXAMPLE);
-  const [constraints, setConstraints] = useState<Constraints | null>(null);
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [booking, setBooking] = useState<Booking | null>(null);
-  const [thinking, setThinking] = useState(false);
-  const [calls, setCalls] = useState<ToolCallRecord[]>([]);
-  const [mcp, setMcp] = useState<{ available: boolean; toolNames: string[] }>({
-    available: false,
-    toolNames: [],
-  });
-  const planRef = useRef<Plan | null>(null);
-  planRef.current = plan;
-
-  useEffect(() => {
-    const reg = registerWebMcp({
-      onCall: (r) => setCalls((c) => [r, ...c].slice(0, 12)),
-      onPlan: (p) => {
-        setPlan(p);
-        setBooking(null);
-      },
-      onBooking: (b) => setBooking(b),
-      getPlan: () => planRef.current,
-    });
-    setMcp({ available: reg.available, toolNames: reg.toolNames });
-    return reg.dispose;
-  }, []);
-
-  const run = useCallback(() => {
-    setThinking(true);
-    setBooking(null);
-    const c = parseRequest(input);
-    setConstraints(c);
-    window.setTimeout(() => {
-      const { plan: p, log: l } = planDateNight(c);
-      setPlan(p);
-      setLog(l);
-      setThinking(false);
-    }, 550);
-  }, [input]);
-
-  useEffect(() => {
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const confirm = () => {
-    if (!plan) return;
-    setBooking(bookPlan(plan));
-  };
-
-  const remaining = useMemo(
-    () => (plan && constraints ? constraints.budget - plan.total : 0),
-    [plan, constraints],
-  );
-
+function Wordmark() {
   return (
-    <main className="mx-auto w-full max-w-5xl px-5 pb-24 pt-14 sm:px-8">
-      <header className="flex flex-col gap-4">
-        <span className="rule-chip w-fit">
-          <Sparkles className="size-3.5 text-primary" />
-          WebMCP tool site
-        </span>
-        <h1 className="text-5xl leading-[1.02] sm:text-6xl">
-          Date Genie
-          <span className="block text-primary">Date night as a single command.</span>
-        </h1>
-        <p className="max-w-2xl text-base text-muted-foreground">
-          Not ten suggestions. One itinerary that fits your budget, your radius and your clock — dinner,
-          tickets and parking held together, ready to confirm.
-        </p>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="rule-chip">
-            <span
-              className={`size-2 rounded-full ${mcp.available ? "bg-accent" : "bg-muted-foreground"}`}
-            />
-            {mcp.available ? "navigator.modelContext connected" : "No agent detected — tools staged on window.dateGenie"}
-          </span>
-          <span className="rule-chip">{mcp.toolNames.length} tools exposed</span>
-        </div>
-      </header>
-
-      <section className="mt-10 surface glow-ring p-5 sm:p-6">
-        <label htmlFor="cmd" className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-          The command
-        </label>
-        <textarea
-          id="cmd"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          rows={3}
-          className="mt-3 w-full resize-none rounded-lg border border-input bg-ink/60 p-4 font-mono text-sm leading-relaxed text-foreground outline-none focus:border-primary"
-        />
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            {constraints && (
-              <>
-                <span className="rule-chip">budget {money(constraints.budget)}</span>
-                <span className="rule-chip">after {fmtTime(constraints.earliest)}</span>
-                <span className="rule-chip">≤ {constraints.maxDriveMinutes} min drive</span>
-                <span className="rule-chip">party of {constraints.party}</span>
-              </>
-            )}
-          </div>
-          <button
-            onClick={run}
-            className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition hover:brightness-110"
-          >
-            <Wand2 className="size-4" />
-            {thinking ? "Composing…" : "Plan it"}
-          </button>
-        </div>
-      </section>
-
-      <section className="mt-8 grid gap-6 lg:grid-cols-[1.25fr_1fr]">
-        <div className="surface p-5 sm:p-6">
-          <h2 className="text-xl">The night</h2>
-          {thinking && <p className="mt-6 font-mono text-sm text-muted-foreground">composing itinerary…</p>}
-
-          {!thinking && plan && (
-            <div className="mt-5 space-y-3">
-              <ItineraryRow
-                icon={UtensilsCrossed}
-                time={fmtTime(plan.dinner.time)}
-                title={plan.dinner.restaurant.name}
-                sub={`${plan.dinner.restaurant.cuisine} · ${plan.dinner.restaurant.neighborhood} · ${plan.dinner.restaurant.vibe}`}
-                cost={plan.dinner.cost}
-              />
-              <ItineraryRow
-                icon={Ticket}
-                time={fmtTime(plan.event.event.start)}
-                title={plan.event.event.name}
-                sub={`${plan.event.event.venue} · ${plan.event.walkMinutes}-minute walk from dinner`}
-                cost={plan.event.cost}
-              />
-              <ItineraryRow
-                icon={Car}
-                time="park once"
-                title={plan.parking.spot.name}
-                sub={`${plan.parking.spot.walkMinutes}-minute walk · covers the whole evening`}
-                cost={plan.parking.cost}
-              />
-
-              <div className="flex items-center justify-between border-t border-border pt-4">
-                <div>
-                  <p className="text-2xl font-semibold">Total {money(plan.total)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {money(remaining)} under budget · {plan.dinner.restaurant.driveMinutes} min drive
-                  </p>
-                </div>
-                {!booking ? (
-                  <button
-                    onClick={confirm}
-                    className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-foreground transition hover:brightness-110"
-                  >
-                    Reserve it
-                  </button>
-                ) : (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-accent px-4 py-2 text-sm font-semibold text-accent">
-                    <CheckCircle2 className="size-4" /> Booked
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {!thinking && !plan && (
-            <p className="mt-5 text-sm text-muted-foreground">
-              Nothing clears every constraint. Raise the budget, push the drive radius, or start earlier.
-            </p>
-          )}
-
-          {booking && (
-            <div className="mt-5 rounded-lg border border-accent/40 bg-ink/50 p-4">
-              <p className="font-mono text-xs uppercase tracking-widest text-accent">
-                Confirmation {booking.confirmation}
-              </p>
-              <ul className="mt-3 space-y-2 text-sm">
-                {booking.lines.map((l) => (
-                  <li key={l.label} className="flex justify-between gap-4">
-                    <span>
-                      <span className="font-medium">{l.label}</span>
-                      <span className="block font-mono text-xs text-muted-foreground">{l.detail}</span>
-                    </span>
-                    <span className="font-mono">{money(l.cost)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-6">
-          <div className="surface p-5">
-            <h2 className="text-lg">Tools on this page</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Exposed via <span className="font-mono">navigator.modelContext</span> for any WebMCP agent.
-            </p>
-            <ul className="mt-4 space-y-3">
-              {TOOL_GROUPS.map(({ icon: Icon, label, tools }) => (
-                <li key={label} className="flex gap-3">
-                  <Icon className="mt-0.5 size-4 shrink-0 text-primary" />
-                  <div>
-                    <p className="text-sm font-medium">{label}</p>
-                    <p className="font-mono text-xs text-muted-foreground">{tools.join("() · ")}()</p>
-                  </div>
-                </li>
-              ))}
-              <li className="flex gap-3">
-                <Sparkles className="mt-0.5 size-4 shrink-0 text-accent" />
-                <div>
-                  <p className="text-sm font-medium">One-shot</p>
-                  <p className="font-mono text-xs text-muted-foreground">
-                    plan_date_night() · book_current_plan()
-                  </p>
-                </div>
-              </li>
-            </ul>
-          </div>
-
-          <div className="surface p-5">
-            <h2 className="text-lg">Execution trace</h2>
-            <ul className="mt-3 space-y-1.5 font-mono text-xs text-muted-foreground">
-              {log.map((l) => (
-                <li key={l} className="flex gap-2">
-                  <Clock className="mt-0.5 size-3 shrink-0 text-primary" />
-                  {l}
-                </li>
-              ))}
-              {calls.map((c) => (
-                <li key={c.id} className="flex gap-2 text-accent">
-                  <Footprints className="mt-0.5 size-3 shrink-0" />
-                  agent → {c.name}()
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <footer className="mt-14 border-t border-border pt-6 text-sm text-muted-foreground">
-        AI stops recommending your life and starts executing it.
-      </footer>
-    </main>
+    <div className="flex items-center gap-3">
+      <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-primary/40 bg-primary/15 text-xl">
+        🧞
+      </span>
+      <div>
+        <h1 className="font-display text-xl leading-none font-extrabold tracking-tight text-foreground">Date Genie</h1>
+        <p className="mt-1 text-xs text-muted-foreground">Date night as a single command</p>
+      </div>
+    </div>
   );
 }
 
-function ItineraryRow({
-  icon: Icon,
-  time,
-  title,
-  sub,
-  cost,
-}: {
-  icon: typeof Ticket;
-  time: string;
-  title: string;
-  sub: string;
-  cost: number;
-}) {
+/** The argument, stated once, for a judge who reads before they click. */
+function Thesis() {
+  const points = [
+    {
+      k: "The agent reads your page, not your mind",
+      v: "Every dial you touch is state the agent fetches with get_date_context before it asks you anything. Half the questions never get asked.",
+    },
+    {
+      k: "It executes instead of recommending",
+      v: "plan_date_night searches every dinner × event × parking combination and returns one bookable evening, with the arithmetic shown.",
+    },
+    {
+      k: "Your thumb is the only thing that spends money",
+      v: "request_approval suspends the tool call until you press a button in this page. No timeout, no default. book_approved_plan does not exist until you do.",
+    },
+  ];
   return (
-    <div className="flex items-start gap-4 rounded-lg border border-border bg-ink/40 p-4">
-      <Icon className="mt-1 size-5 shrink-0 text-primary" />
-      <div className="flex-1">
-        <p className="font-mono text-xs uppercase tracking-widest text-primary">{time}</p>
-        <p className="text-lg font-semibold">{title}</p>
-        <p className="text-xs text-muted-foreground">{sub}</p>
-      </div>
-      <span className="font-mono text-sm">{money(cost)}</span>
+    <div className="grid gap-3 sm:grid-cols-3">
+      {points.map((p) => (
+        <div key={p.k} className="surface p-4">
+          <h3 className="font-display text-sm font-semibold text-foreground">{p.k}</h3>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{p.v}</p>
+        </div>
+      ))}
     </div>
+  );
+}
+
+function DateGenie() {
+  const { webmcp, demoRunning } = useGenie();
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    store.hydrate();
+    void store.loadLiveInventory();
+    const bound = bindWebMcp();
+    setReady(true);
+    if (typeof console !== "undefined") {
+      console.info(
+        `[date-genie] WebMCP ${bound.bound ? `bound to ${bound.surface}` : "host not detected; tools still available on window.dateGenie"}; ${bound.toolNames.length} tools: ${bound.toolNames.join(", ")}`,
+      );
+    }
+    return bound.dispose;
+  }, []);
+
+  return (
+    <main className="mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
+      <header className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <Wordmark />
+        {ready ? <StatusPill /> : null}
+      </header>
+
+      <section className="mb-6">
+        <h2 className="max-w-3xl font-display text-3xl leading-[1.1] font-extrabold tracking-tight text-balance text-foreground sm:text-4xl">
+          AI should stop <span className="text-muted-foreground line-through decoration-destructive/60">recommending</span> your
+          life and start <span className="text-primary">executing</span> it.
+        </h2>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          Ten links is not an answer. Date Genie exposes a whole evening (dinner, a show, and somewhere to put the car)
+          as WebMCP tools, so your agent hands back <span className="text-foreground">7:30, then 9:15, $164, reserve it?</span>{" "}
+          and you answer with one thumb.
+        </p>
+      </section>
+
+      <div className="mb-6">
+        <CommandBar
+          samples={SAMPLE_REQUESTS}
+          onRun={(text) => {
+            void runDemoAgent(text);
+          }}
+        />
+        {!webmcp.bound && ready ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            No WebMCP host in this browser, so that button runs the page's own scripted agent. It calls the identical
+            tools over the identical code path, including stopping dead at the approval gate.
+          </p>
+        ) : null}
+        {webmcp.bound && !webmcp.agentSeen && ready ? (
+          <p className="mt-2 text-xs text-accent">
+            WebMCP detected on <code className="font-mono">{webmcp.surface}</code>. Ask your agent to plan your evening,
+            or press the button to watch it happen without one.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-12">
+        <div className="lg:col-span-3">
+          <ConstraintDeck />
+        </div>
+        <div className="lg:col-span-6">
+          <Stage />
+        </div>
+        <div className="lg:col-span-3">
+          <ToolConsole />
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <ToolSurface />
+      </div>
+
+      <section className="mt-8">
+        <h2 className="mb-3 font-display text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+          Why this needs to be WebMCP, and not a server
+        </h2>
+        <Thesis />
+      </section>
+
+      <footer className="mt-10 border-t border-border pt-6 text-xs text-muted-foreground">
+        <p>
+          Built for the WebMCP Challenge. Inventory is representative Arlington, VA data standing in for OpenTable,
+          Ticketmaster and SpotHero. The tool contracts and the planner would not change if you swapped it for live
+          feeds. Reservations are simulated; no card is ever charged.
+        </p>
+        <p className="mt-2">
+          Open <code className="font-mono text-foreground">window.dateGenie.listTools()</code> in the console to inspect
+          the surface yourself, or call any tool directly with{" "}
+          <code className="font-mono text-foreground">window.dateGenie.call(name, args)</code>.
+          {demoRunning ? <span className="ml-2 text-primary">agent running…</span> : null}
+        </p>
+      </footer>
+
+      <ApprovalSheet />
+    </main>
   );
 }
