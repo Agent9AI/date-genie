@@ -45,7 +45,14 @@ export type ToolCall = {
 
 export type ApprovalState =
   | { status: "idle" }
-  | { status: "pending"; id: string; summary: string; total: number; plan: Plan; requestedAt: number }
+  | {
+      status: "pending";
+      id: string;
+      summary: string;
+      total: number;
+      plan: Plan;
+      requestedAt: number;
+    }
   | { status: "approved"; id: string; nonce: string; note?: string; plan: Plan; at: number }
   | { status: "declined"; id: string; note?: string; at: number };
 
@@ -144,7 +151,13 @@ export function set(patch: Partial<State> | ((s: State) => Partial<State>)) {
  *  not about a place. */
 export function hydrate() {
   const vetoes = loadVetoes();
-  set({ vetoes, constraints: { ...state.constraints, avoid: [...new Set([...state.constraints.avoid, ...vetoes])] } });
+  set({
+    vetoes,
+    constraints: {
+      ...state.constraints,
+      avoid: [...new Set([...state.constraints.avoid, ...vetoes])],
+    },
+  });
 }
 
 export function addVeto(term: string) {
@@ -152,7 +165,10 @@ export function addVeto(term: string) {
   if (!t || state.vetoes.includes(t)) return state.vetoes;
   const vetoes = [...state.vetoes, t];
   saveVetoes(vetoes);
-  set({ vetoes, constraints: { ...state.constraints, avoid: [...new Set([...state.constraints.avoid, t])] } });
+  set({
+    vetoes,
+    constraints: { ...state.constraints, avoid: [...new Set([...state.constraints.avoid, t])] },
+  });
   return vetoes;
 }
 
@@ -160,7 +176,10 @@ export function removeVeto(term: string) {
   const t = term.trim().toLowerCase();
   const vetoes = state.vetoes.filter((v) => v !== t);
   saveVetoes(vetoes);
-  set({ vetoes, constraints: { ...state.constraints, avoid: state.constraints.avoid.filter((a) => a !== t) } });
+  set({
+    vetoes,
+    constraints: { ...state.constraints, avoid: state.constraints.avoid.filter((a) => a !== t) },
+  });
   return vetoes;
 }
 
@@ -178,12 +197,17 @@ export function patchCall(id: string, patch: Partial<ToolCall>) {
 
 /* ----------------------------------------------------------- location ---- */
 
-export async function setPlace(query: string): Promise<{ ok: boolean; place?: Place; error?: string }> {
+export async function setPlace(
+  query: string,
+): Promise<{ ok: boolean; place?: Place; error?: string }> {
   set({ searching: true, notice: null });
   const place = await geocode(query);
   if (!place) {
     set({ searching: false, notice: `Could not find "${query}" on the map.` });
-    return { ok: false, error: `Could not find "${query}". Try adding a state or country, e.g. "Fredericksburg, VA".` };
+    return {
+      ok: false,
+      error: `Could not find "${query}". Try adding a state or country, e.g. "Fredericksburg, VA".`,
+    };
   }
   setHome(place.at);
   set({ place, pool: null });
@@ -272,7 +296,12 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
     const openPool = await searchWithWidening({
       at: place.at,
       radiusKm: 6,
-      restaurants: { dietary: merged.dietary, avoid: merged.avoid, earliest: merged.earliest, party: merged.party },
+      restaurants: {
+        dietary: merged.dietary,
+        avoid: merged.avoid,
+        earliest: merged.earliest,
+        party: merged.party,
+      },
       events: { earliest: merged.earliest, latestEnd: merged.latestEnd },
     });
     if (openPool.restaurants.length) {
@@ -283,16 +312,22 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
         // Only apologise for ignoring a preference we actually ignored. The
         // unfiltered search often lands on the thing they asked for anyway.
         const missed = [
-          cuisine && !`${chosen.dinner.restaurant.cuisine} ${chosen.dinner.restaurant.tags.join(" ")}`.toLowerCase().includes(cuisine) ? cuisine : null,
+          cuisine &&
+          !`${chosen.dinner.restaurant.cuisine} ${chosen.dinner.restaurant.tags.join(" ")}`
+            .toLowerCase()
+            .includes(cuisine)
+            ? cuisine
+            : null,
           activity && chosen.event.event.category !== activity ? activity : null,
         ].filter(Boolean);
         if (missed.length) {
           // If money was the reason, say the number. "Could not fit your
           // preference" is useless; "two film tickets plus dinner is $95, your
           // ceiling is $50" is something a person can act on.
-          const why = priorShortfall?.reason === "budget" && priorShortfall.cheapestTotal
-            ? ` Doing it with ${missed.join(" and ")} costs about ${priorShortfall.cheapestTotal} for ${merged.party}, over your ceiling of ${merged.budget}.`
-            : "";
+          const why =
+            priorShortfall?.reason === "budget" && priorShortfall.cheapestTotal
+              ? ` Doing it with ${missed.join(" and ")} costs about ${priorShortfall.cheapestTotal} for ${merged.party}, over your ceiling of ${merged.budget}.`
+              : "";
           set({
             notice: `Nothing matching ${missed.join(" and ")} fit in ${place.label}, so this ignores that.${why} Everything else you asked for still holds.`,
           });
@@ -328,10 +363,17 @@ function applyPlan(c: Constraints, pool: CandidatePool) {
     considered: result.considered,
     relaxations: result.relaxations,
     shortfall,
-    notice: result.plan ? null : (shortfall ? `${shortfall.message} ${shortfall.suggestion}` : s.notice),
+    notice: result.plan
+      ? null
+      : shortfall
+        ? `${shortfall.message} ${shortfall.suggestion}`
+        : s.notice,
     // Any change to the plan invalidates a standing approval. Never let an
     // agent get approval for one evening and book a different one.
-    approval: s.approval.status === "approved" || s.approval.status === "pending" ? { status: "idle" } : s.approval,
+    approval:
+      s.approval.status === "approved" || s.approval.status === "pending"
+        ? { status: "idle" }
+        : s.approval,
     revision: s.revision + 1,
   }));
 }
@@ -346,9 +388,14 @@ let pending: Deferred | null = null;
  * awaits. There is no timeout and no default. An unanswered request simply
  * never resolves, which is the correct behaviour for spending someone's money.
  */
-export function requestApproval(plan: Plan, summary: string): Promise<{ approved: boolean; note?: string; nonce?: string }> {
+export function requestApproval(
+  plan: Plan,
+  summary: string,
+): Promise<{ approved: boolean; note?: string; nonce?: string }> {
   const id = `apr_${Math.random().toString(36).slice(2, 10)}`;
-  set({ approval: { status: "pending", id, summary, total: plan.total, plan, requestedAt: Date.now() } });
+  set({
+    approval: { status: "pending", id, summary, total: plan.total, plan, requestedAt: Date.now() },
+  });
   return new Promise((resolve) => {
     pending = { resolve };
   });
@@ -360,7 +407,14 @@ export function resolveApproval(approved: boolean, note?: string) {
   const nonce = approved ? `nonce_${Math.random().toString(36).slice(2, 12)}` : undefined;
   set({
     approval: approved
-      ? { status: "approved", id: a.id, nonce: nonce!, plan: a.plan, at: Date.now(), ...(note ? { note } : {}) }
+      ? {
+          status: "approved",
+          id: a.id,
+          nonce: nonce!,
+          plan: a.plan,
+          at: Date.now(),
+          ...(note ? { note } : {}),
+        }
       : { status: "declined", id: a.id, at: Date.now(), ...(note ? { note } : {}) },
   });
   pending?.resolve({ approved, ...(note ? { note } : {}), ...(nonce ? { nonce } : {}) });
@@ -368,11 +422,18 @@ export function resolveApproval(approved: boolean, note?: string) {
 }
 
 /** A one-time token: consumed by book_approved_plan, never reusable. */
-export function consumeApproval(nonce: string): { ok: true; plan: Plan; id: string } | { ok: false; error: string } {
+export function consumeApproval(
+  nonce: string,
+): { ok: true; plan: Plan; id: string } | { ok: false; error: string } {
   const a = state.approval;
   if (a.status !== "approved")
-    return { ok: false, error: "No approved plan. Call request_approval first and wait for the human to confirm in the page." };
-  if (a.nonce !== nonce) return { ok: false, error: "Approval token does not match the approved plan." };
+    return {
+      ok: false,
+      error:
+        "No approved plan. Call request_approval first and wait for the human to confirm in the page.",
+    };
+  if (a.nonce !== nonce)
+    return { ok: false, error: "Approval token does not match the approved plan." };
   set({ approval: { status: "idle" } });
   return { ok: true, plan: a.plan, id: a.id };
 }

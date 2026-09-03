@@ -10,7 +10,13 @@
  * be spotted), fee and covered status for parking.
  * Simulated: price, rating, table slots, showtimes, seats. Labelled everywhere.
  */
-import { milesBetween, type EventItem, type LatLng, type ParkingSpot, type Restaurant } from "../data";
+import {
+  milesBetween,
+  type EventItem,
+  type LatLng,
+  type ParkingSpot,
+  type Restaurant,
+} from "../data";
 import type { EventQuery, ParkingQuery, RestaurantQuery, SearchArea, SourceAdapter } from "./types";
 
 /* ------------------------------------------------------ query building ---- */
@@ -18,7 +24,9 @@ import type { EventQuery, ParkingQuery, RestaurantQuery, SearchArea, SourceAdapt
 function bbox(at: LatLng, km: number): string {
   const dLat = km / 111;
   const dLng = km / (111 * Math.max(0.2, Math.cos((at.lat * Math.PI) / 180)));
-  return [at.lat - dLat, at.lng - dLng, at.lat + dLat, at.lng + dLng].map((n) => n.toFixed(4)).join(",");
+  return [at.lat - dLat, at.lng - dLng, at.lat + dLat, at.lng + dLng]
+    .map((n) => n.toFixed(4))
+    .join(",");
 }
 
 /** Escape a user-supplied term before it lands inside an Overpass regex. */
@@ -26,7 +34,9 @@ const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "");
 
 async function overpass(query: string, timeoutMs = 11000): Promise<OsmElement[]> {
   try {
-    const res = await fetch(`/api/osm?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(`/api/osm?q=${encodeURIComponent(query)}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!res.ok) return [];
     const body = (await res.json()) as { elements?: OsmElement[] };
     return body.elements ?? [];
@@ -58,16 +68,44 @@ function hash(s: string): number {
   return h >>> 0;
 }
 const noise = (id: string, channel: string) => (hash(`${id}:${channel}`) % 10000) / 10000;
-const pick = <T,>(id: string, channel: string, xs: readonly T[]): T => xs[Math.floor(noise(id, channel) * xs.length)]!;
+const pick = <T>(id: string, channel: string, xs: readonly T[]): T =>
+  xs[Math.floor(noise(id, channel) * xs.length)]!;
 
 const PRICE_BANDS: Record<string, [number, number]> = {
-  steak_house: [70, 95], steak: [70, 95], sushi: [48, 75], japanese: [30, 60], french: [50, 78],
-  italian: [34, 58], seafood: [48, 76], american: [28, 52], burger: [16, 26], pizza: [18, 30],
-  mexican: [22, 38], salvadoran: [15, 24], peruvian: [28, 46], thai: [22, 36], vietnamese: [16, 28],
-  chinese: [20, 36], korean: [32, 52], indian: [24, 40], mediterranean: [30, 50], greek: [28, 46],
-  middle_eastern: [22, 38], lebanese: [26, 42], ethiopian: [22, 36], spanish: [36, 58], tapas: [36, 58],
-  ramen: [18, 28], noodle: [16, 26], sandwich: [12, 20], cafe: [14, 24], barbecue: [28, 46],
-  balkan: [30, 48], german: [28, 44], turkish: [22, 38], caribbean: [24, 40],
+  steak_house: [70, 95],
+  steak: [70, 95],
+  sushi: [48, 75],
+  japanese: [30, 60],
+  french: [50, 78],
+  italian: [34, 58],
+  seafood: [48, 76],
+  american: [28, 52],
+  burger: [16, 26],
+  pizza: [18, 30],
+  mexican: [22, 38],
+  salvadoran: [15, 24],
+  peruvian: [28, 46],
+  thai: [22, 36],
+  vietnamese: [16, 28],
+  chinese: [20, 36],
+  korean: [32, 52],
+  indian: [24, 40],
+  mediterranean: [30, 50],
+  greek: [28, 46],
+  middle_eastern: [22, 38],
+  lebanese: [26, 42],
+  ethiopian: [22, 36],
+  spanish: [36, 58],
+  tapas: [36, 58],
+  ramen: [18, 28],
+  noodle: [16, 26],
+  sandwich: [12, 20],
+  cafe: [14, 24],
+  barbecue: [28, 46],
+  balkan: [30, 48],
+  german: [28, 44],
+  turkish: [22, 38],
+  caribbean: [24, 40],
 };
 
 const SLOT_GRIDS = [
@@ -79,12 +117,42 @@ const SLOT_GRIDS = [
 ] as const;
 
 const GLYPHS: Record<string, string> = {
-  sushi: "🍣", japanese: "🍜", ramen: "🍜", noodle: "🍜", korean: "🔥", barbecue: "🔥",
-  seafood: "🦪", steak: "🥩", steak_house: "🥩", french: "🥖", italian: "🍝", pizza: "🍕",
-  mexican: "🌵", salvadoran: "🫓", peruvian: "🌶️", thai: "🍲", vietnamese: "🍜", chinese: "🥟",
-  indian: "🍛", mediterranean: "🫒", greek: "🫒", middle_eastern: "🧆", lebanese: "🧆",
-  ethiopian: "🫓", spanish: "🥘", tapas: "🥘", american: "🍽️", burger: "🍔", sandwich: "🥪",
-  cafe: "☕", vegan: "🌿", vegetarian: "🌿", balkan: "🍖", turkish: "🥙", german: "🥨", caribbean: "🍹",
+  sushi: "🍣",
+  japanese: "🍜",
+  ramen: "🍜",
+  noodle: "🍜",
+  korean: "🔥",
+  barbecue: "🔥",
+  seafood: "🦪",
+  steak: "🥩",
+  steak_house: "🥩",
+  french: "🥖",
+  italian: "🍝",
+  pizza: "🍕",
+  mexican: "🌵",
+  salvadoran: "🫓",
+  peruvian: "🌶️",
+  thai: "🍲",
+  vietnamese: "🍜",
+  chinese: "🥟",
+  indian: "🍛",
+  mediterranean: "🫒",
+  greek: "🫒",
+  middle_eastern: "🧆",
+  lebanese: "🧆",
+  ethiopian: "🫓",
+  spanish: "🥘",
+  tapas: "🥘",
+  american: "🍽️",
+  burger: "🍔",
+  sandwich: "🥪",
+  cafe: "☕",
+  vegan: "🌿",
+  vegetarian: "🌿",
+  balkan: "🍖",
+  turkish: "🥙",
+  german: "🥨",
+  caribbean: "🍹",
 };
 
 const VIBES = [
@@ -101,7 +169,9 @@ function areaLabel(at: LatLng, origin: LatLng): string {
   const miles = milesBetween(origin, at);
   if (miles < 0.4) return "town centre";
   const bearing = (Math.atan2(at.lng - origin.lng, at.lat - origin.lat) * 180) / Math.PI;
-  const compass = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(((bearing + 360) % 360) / 45) % 8]!;
+  const compass = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][
+    Math.round(((bearing + 360) % 360) / 45) % 8
+  ]!;
   return `${miles.toFixed(1)} mi ${compass}`;
 }
 
@@ -118,9 +188,14 @@ function toRestaurant(e: OsmElement, origin: LatLng): Restaurant | null {
   const band = PRICE_BANDS[cuisineKey] ?? [24, 46];
   const isChain = Boolean(tags["brand"] ?? tags["brand:wikidata"] ?? tags["operator:wikidata"]);
 
-  const vegan = tags["diet:vegan"] === "yes" || tags["diet:vegan"] === "only" || cuisineKey === "vegan";
-  const vegetarian = vegan || tags["diet:vegetarian"] === "yes" || tags["diet:vegetarian"] === "only";
-  const tagList = [cuisineKey, ...(tags["cuisine"] ?? "").split(";").map((c) => c.trim().toLowerCase())].filter(Boolean);
+  const vegan =
+    tags["diet:vegan"] === "yes" || tags["diet:vegan"] === "only" || cuisineKey === "vegan";
+  const vegetarian =
+    vegan || tags["diet:vegetarian"] === "yes" || tags["diet:vegetarian"] === "only";
+  const tagList = [
+    cuisineKey,
+    ...(tags["cuisine"] ?? "").split(";").map((c) => c.trim().toLowerCase()),
+  ].filter(Boolean);
   if (vegan) tagList.push("vegan", "vegan-friendly", "vegetarian-friendly");
   if (vegetarian) tagList.push("vegetarian-friendly");
   if (tags["diet:gluten_free"] === "yes") tagList.push("gluten-free-friendly");
@@ -163,7 +238,12 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
     const r = toRestaurant(e, q.at);
     if (!r) continue;
     if (q.maxPricePerPerson && r.pricePerPerson > q.maxPricePerPerson) continue;
-    if (q.avoid?.some((a) => `${r.cuisine} ${r.tags.join(" ")} ${r.name}`.toLowerCase().includes(a.toLowerCase()))) continue;
+    if (
+      q.avoid?.some((a) =>
+        `${r.cuisine} ${r.tags.join(" ")} ${r.name}`.toLowerCase().includes(a.toLowerCase()),
+      )
+    )
+      continue;
     out.push(r);
   }
   return out.sort((a, b) => milesBetween(q.at, a.at) - milesBetween(q.at, b.at)).slice(0, 120);
@@ -172,14 +252,38 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
 /* ------------------------------------------------------------ events ---- */
 
 const EVENT_KINDS = {
-  cinema: { category: "film", glyph: "🎞️", price: [12, 22], starts: ["19:00", "19:45", "20:30", "21:15"], mins: 110,
-    what: ["Late screening", "Director's cut, one night only", "35mm print", "Second feature"] },
-  theatre: { category: "theater", glyph: "🎭", price: [22, 48], starts: ["19:30", "20:00", "20:30"], mins: 135,
-    what: ["Evening performance", "Preview night", "Closing weekend", "Late show"] },
-  nightclub: { category: "music", glyph: "🎷", price: [10, 34], starts: ["20:30", "21:00", "21:30", "22:00"], mins: 150,
-    what: ["Live set", "All-vinyl night", "Local bands, three sets", "DJ, no laptops"] },
-  arts_centre: { category: "class", glyph: "🏺", price: [0, 40], starts: ["18:30", "19:00", "19:30", "20:00"], mins: 120,
-    what: ["Late studio session", "Drop-in workshop", "Open studio", "Making night"] },
+  cinema: {
+    category: "film",
+    glyph: "🎞️",
+    price: [12, 22],
+    starts: ["19:00", "19:45", "20:30", "21:15"],
+    mins: 110,
+    what: ["Late screening", "Director's cut, one night only", "35mm print", "Second feature"],
+  },
+  theatre: {
+    category: "theater",
+    glyph: "🎭",
+    price: [22, 48],
+    starts: ["19:30", "20:00", "20:30"],
+    mins: 135,
+    what: ["Evening performance", "Preview night", "Closing weekend", "Late show"],
+  },
+  nightclub: {
+    category: "music",
+    glyph: "🎷",
+    price: [10, 34],
+    starts: ["20:30", "21:00", "21:30", "22:00"],
+    mins: 150,
+    what: ["Live set", "All-vinyl night", "Local bands, three sets", "DJ, no laptops"],
+  },
+  arts_centre: {
+    category: "class",
+    glyph: "🏺",
+    price: [0, 40],
+    starts: ["18:30", "19:00", "19:30", "20:00"],
+    mins: 120,
+    what: ["Late studio session", "Drop-in workshop", "Open studio", "Making night"],
+  },
 } as const;
 
 const CATEGORY_TO_AMENITY: Record<string, (keyof typeof EVENT_KINDS)[]> = {
@@ -216,7 +320,8 @@ function toEvent(e: OsmElement, origin: LatLng): EventItem | null {
 async function searchEvents(q: EventQuery): Promise<EventItem[]> {
   const bb = bbox(q.at, q.radiusKm);
   const amenities = q.category
-    ? (CATEGORY_TO_AMENITY[q.category] ?? (Object.keys(EVENT_KINDS) as (keyof typeof EVENT_KINDS)[]))
+    ? (CATEGORY_TO_AMENITY[q.category] ??
+      (Object.keys(EVENT_KINDS) as (keyof typeof EVENT_KINDS)[]))
     : (Object.keys(EVENT_KINDS) as (keyof typeof EVENT_KINDS)[]);
   const query = `[out:json][timeout:12];\n(\n${amenities
     .map((a) => `  nwr["amenity"="${a}"]["name"](${bb});`)
@@ -246,7 +351,11 @@ async function searchParking(q: ParkingQuery): Promise<ParkingSpot[]> {
     const tags = e.tags ?? {};
     if (!at) continue;
     const id = `osm_${e.type}_${e.id}`;
-    const name = tags["name"] ?? (tags["parking"] === "street_side" || tags["parking"] === "lane" ? "Street parking" : "Public parking");
+    const name =
+      tags["name"] ??
+      (tags["parking"] === "street_side" || tags["parking"] === "lane"
+        ? "Street parking"
+        : "Public parking");
     // Staff-only lots are not somewhere you can leave a car on a date.
     if (/employee|staff|resident|permit/i.test(name)) continue;
     out.push({
@@ -255,7 +364,10 @@ async function searchParking(q: ParkingQuery): Promise<ParkingSpot[]> {
       at,
       priceForEvening: tags["fee"] === "no" ? 0 : Math.round(6 + noise(id, "park") * 14),
       spacesLeft: Number(tags["capacity"] ?? 0) || Math.round(8 + noise(id, "spaces") * 180),
-      covered: tags["parking"] === "underground" || tags["parking"] === "multi-storey" || tags["covered"] === "yes",
+      covered:
+        tags["parking"] === "underground" ||
+        tags["parking"] === "multi-storey" ||
+        tags["covered"] === "yes",
     });
   }
   return out.slice(0, 80);

@@ -39,21 +39,40 @@ const UNDERSTAND_FALLBACK = "@cf/meta/llama-3.2-3b-instruct";
 const CONSTRAINT_SCHEMA = {
   type: "object",
   properties: {
-    location: { type: ["string", "null"], description: "Place named by the user, e.g. 'Fredericksburg, VA'. Null if none." },
-    budget: { type: ["number", "null"], description: "Total ceiling in USD for the WHOLE evening, all people" },
+    location: {
+      type: ["string", "null"],
+      description: "Place named by the user, e.g. 'Fredericksburg, VA'. Null if none.",
+    },
+    budget: {
+      type: ["number", "null"],
+      description: "Total ceiling in USD for the WHOLE evening, all people",
+    },
     earliest: { type: ["string", "null"], description: "Nothing before this, 24-hour HH:MM" },
     latestEnd: { type: ["string", "null"], description: "Must be over by this, 24-hour HH:MM" },
     party: { type: ["number", "null"], description: "How many people are going" },
     maxDriveMinutes: { type: ["number", "null"] },
     maxWalkMinutes: { type: ["number", "null"] },
-    cuisines: { type: "array", items: { type: "string" }, description: "Food they asked for, ONE WORD each, lowercase: korean, thai, pizza, seafood. Empty if they did not say." },
+    cuisines: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "Food they asked for, ONE WORD each, lowercase: korean, thai, pizza, seafood. Empty if they did not say.",
+    },
     activities: {
       type: "array",
       items: { type: "string", enum: ["comedy", "music", "film", "class", "theater"] },
-      description: "What they want to do after dinner. A movie is 'film'. A concert, band, DJ or live music is 'music'. Stand-up is 'comedy'. A play or show is 'theater'. A workshop or making something is 'class'.",
+      description:
+        "What they want to do after dinner. A movie is 'film'. A concert, band, DJ or live music is 'music'. Stand-up is 'comedy'. A play or show is 'theater'. A workshop or making something is 'class'.",
     },
-    avoid: { type: "array", items: { type: "string" }, description: "Anything ruled out: seafood, loud, chain" },
-    dietary: { type: "array", items: { type: "string", enum: ["vegan", "vegetarian", "gluten-free"] } },
+    avoid: {
+      type: "array",
+      items: { type: "string" },
+      description: "Anything ruled out: seafood, loud, chain",
+    },
+    dietary: {
+      type: "array",
+      items: { type: "string", enum: ["vegan", "vegetarian", "gluten-free"] },
+    },
     noisePreference: { type: ["string", "null"], enum: ["quiet", "moderate", "loud", null] },
     occasion: { type: ["string", "null"], description: "anniversary, birthday, first date, null" },
   },
@@ -103,7 +122,10 @@ async function understand(env: Env, text: string): Promise<Response> {
 function coerceJson(value: unknown): Record<string, unknown> | null {
   if (value && typeof value === "object") return value as Record<string, unknown>;
   if (typeof value !== "string") return null;
-  const cleaned = value.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const cleaned = value
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
@@ -126,13 +148,19 @@ const json = (body: unknown, status = 200, cacheSeconds = 0) =>
     headers: {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
-      ...(cacheSeconds ? { "cache-control": `public, max-age=${cacheSeconds}` } : { "cache-control": "no-store" }),
+      ...(cacheSeconds
+        ? { "cache-control": `public, max-age=${cacheSeconds}` }
+        : { "cache-control": "no-store" }),
     },
   });
 
 /** Read-through edge cache. The cache key is the request URL, so distinct
  *  searches stay distinct and nothing is pinned to one place. */
-async function cached(request: Request, ttl: number, produce: () => Promise<Response>): Promise<Response> {
+async function cached(
+  request: Request,
+  ttl: number,
+  produce: () => Promise<Response>,
+): Promise<Response> {
   const cache = (globalThis as unknown as { caches?: { default?: Cache } }).caches?.default;
   if (!cache) return produce();
   const key = new Request(request.url, { method: "GET" });
@@ -183,7 +211,17 @@ async function overpass(query: string): Promise<unknown | null> {
 async function yelpSearch(env: Env, params: URLSearchParams): Promise<Response> {
   if (!env.YELP_API_KEY) return json({ unavailable: "no_key", businesses: [] }, 200, 60);
   const url = new URL("https://api.yelp.com/v3/businesses/search");
-  for (const k of ["latitude", "longitude", "radius", "term", "categories", "price", "open_at", "limit", "sort_by"]) {
+  for (const k of [
+    "latitude",
+    "longitude",
+    "radius",
+    "term",
+    "categories",
+    "price",
+    "open_at",
+    "limit",
+    "sort_by",
+  ]) {
     const v = params.get(k);
     if (v) url.searchParams.set(k, v);
   }
@@ -196,7 +234,16 @@ async function ticketmasterSearch(env: Env, params: URLSearchParams): Promise<Re
   if (!env.TICKETMASTER_API_KEY) return json({ unavailable: "no_key", events: [] }, 200, 60);
   const url = new URL("https://app.ticketmaster.com/discovery/v2/events.json");
   url.searchParams.set("apikey", env.TICKETMASTER_API_KEY);
-  for (const k of ["latlong", "radius", "unit", "startDateTime", "endDateTime", "classificationName", "size", "sort"]) {
+  for (const k of [
+    "latlong",
+    "radius",
+    "unit",
+    "startDateTime",
+    "endDateTime",
+    "classificationName",
+    "size",
+    "sort",
+  ]) {
     const v = params.get(k);
     if (v) url.searchParams.set(k, v);
   }
@@ -208,11 +255,23 @@ async function ticketmasterSearch(env: Env, params: URLSearchParams): Promise<Re
 async function foursquareSearch(env: Env, params: URLSearchParams): Promise<Response> {
   if (!env.FOURSQUARE_API_KEY) return json({ unavailable: "no_key", results: [] }, 200, 60);
   const url = new URL("https://api.foursquare.com/v3/places/search");
-  for (const k of ["ll", "radius", "query", "categories", "min_price", "max_price", "limit", "sort", "fields"]) {
+  for (const k of [
+    "ll",
+    "radius",
+    "query",
+    "categories",
+    "min_price",
+    "max_price",
+    "limit",
+    "sort",
+    "fields",
+  ]) {
     const v = params.get(k);
     if (v) url.searchParams.set(k, v);
   }
-  const res = await fetch(url, { headers: { Authorization: env.FOURSQUARE_API_KEY, Accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { Authorization: env.FOURSQUARE_API_KEY, Accept: "application/json" },
+  });
   if (!res.ok) return json({ unavailable: `foursquare_${res.status}`, results: [] }, 200, 30);
   return json(await res.json(), 200, 900);
 }
@@ -268,11 +327,46 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
         return json(
           {
             sources: [
-              { id: "osm", label: "OpenStreetMap", kind: "api-adapter", available: true, needsKey: false, provides: ["restaurants", "venues", "parking"] },
-              { id: "yelp", label: "Yelp Fusion", kind: "api-adapter", available: Boolean(env.YELP_API_KEY), needsKey: true, provides: ["restaurants", "ratings", "price"] },
-              { id: "ticketmaster", label: "Ticketmaster Discovery", kind: "api-adapter", available: Boolean(env.TICKETMASTER_API_KEY), needsKey: true, provides: ["events", "showtimes", "ticket price"] },
-              { id: "foursquare", label: "Foursquare Places", kind: "api-adapter", available: Boolean(env.FOURSQUARE_API_KEY), needsKey: true, provides: ["restaurants", "ratings"] },
-              { id: "workers-ai", label: "Cloudflare Workers AI", kind: "api-adapter", available: Boolean(env.AI), needsKey: false, provides: ["language understanding"] },
+              {
+                id: "osm",
+                label: "OpenStreetMap",
+                kind: "api-adapter",
+                available: true,
+                needsKey: false,
+                provides: ["restaurants", "venues", "parking"],
+              },
+              {
+                id: "yelp",
+                label: "Yelp Fusion",
+                kind: "api-adapter",
+                available: Boolean(env.YELP_API_KEY),
+                needsKey: true,
+                provides: ["restaurants", "ratings", "price"],
+              },
+              {
+                id: "ticketmaster",
+                label: "Ticketmaster Discovery",
+                kind: "api-adapter",
+                available: Boolean(env.TICKETMASTER_API_KEY),
+                needsKey: true,
+                provides: ["events", "showtimes", "ticket price"],
+              },
+              {
+                id: "foursquare",
+                label: "Foursquare Places",
+                kind: "api-adapter",
+                available: Boolean(env.FOURSQUARE_API_KEY),
+                needsKey: true,
+                provides: ["restaurants", "ratings"],
+              },
+              {
+                id: "workers-ai",
+                label: "Cloudflare Workers AI",
+                kind: "api-adapter",
+                available: Boolean(env.AI),
+                needsKey: false,
+                provides: ["language understanding"],
+              },
             ],
           },
           200,
@@ -284,7 +378,9 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
         if (!query) return json({ error: "missing q" }, 400);
         return cached(request, 1800, async () => {
           const body = await overpass(query);
-          return body ? json(body, 200, 1800) : json({ elements: [], unavailable: "overpass_unreachable" }, 200, 30);
+          return body
+            ? json(body, 200, 1800)
+            : json({ elements: [], unavailable: "overpass_unreachable" }, 200, 30);
         });
       }
 
@@ -292,9 +388,15 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
         const q = url.searchParams.get("q");
         if (!q) return json({ error: "missing q" }, 400);
         return cached(request, 86400, async () => {
-          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, {
-            headers: { "user-agent": "date-genie/1.0 (https://date-genie.agent9.dev)", accept: "application/json" },
-          });
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
+            {
+              headers: {
+                "user-agent": "date-genie/1.0 (https://date-genie.agent9.dev)",
+                accept: "application/json",
+              },
+            },
+          );
           if (!res.ok) return json({ results: [] }, 200, 60);
           return json({ results: await res.json() }, 200, 86400);
         });

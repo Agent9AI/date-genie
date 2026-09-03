@@ -135,7 +135,8 @@ export const fmtTime = (t: string) => {
 export const money = (n: number) => (n === 0 ? "free" : `$${n.toFixed(0)}`);
 
 /** Roughly how long a meal takes at this kind of place. */
-const mealMinutes = (r: Restaurant) => (r.pricePerPerson >= 55 ? 105 : r.pricePerPerson >= 35 ? 85 : 65);
+const mealMinutes = (r: Restaurant) =>
+  r.pricePerPerson >= 55 ? 105 : r.pricePerPerson >= 35 ? 85 : 65;
 
 const matchesAvoid = (haystack: string[], avoid: string[]) =>
   avoid.some((a) => haystack.some((h) => h.toLowerCase().includes(a.toLowerCase())));
@@ -163,23 +164,32 @@ export function filterRestaurants(
     avoid = [],
     noise,
   } = input;
-  return pool.filter((r) => {
-    if (r.pricePerPerson > maxPricePerPerson) return false;
-    if (driveMinutes(r.at) > maxDriveMinutes) return false;
-    if (cuisine && !`${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(cuisine.toLowerCase())) return false;
-    if (!r.slots.some((s) => toMinutes(s) >= toMinutes(earliest))) return false;
-    if (matchesAvoid([r.cuisine, ...r.tags, r.name], avoid)) return false;
-    if (noise && r.noise !== noise) return false;
-    for (const d of dietary) {
-      const need = d.toLowerCase().replace(/\s+/g, "-");
-      const ok = r.tags.some((t) => t === need || t === `${need}-friendly`);
-      if (!ok) return false;
-    }
-    return true;
-  }).sort((a, b) => b.rating - a.rating);
+  return pool
+    .filter((r) => {
+      if (r.pricePerPerson > maxPricePerPerson) return false;
+      if (driveMinutes(r.at) > maxDriveMinutes) return false;
+      if (
+        cuisine &&
+        !`${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(cuisine.toLowerCase())
+      )
+        return false;
+      if (!r.slots.some((s) => toMinutes(s) >= toMinutes(earliest))) return false;
+      if (matchesAvoid([r.cuisine, ...r.tags, r.name], avoid)) return false;
+      if (noise && r.noise !== noise) return false;
+      for (const d of dietary) {
+        const need = d.toLowerCase().replace(/\s+/g, "-");
+        const ok = r.tags.some((t) => t === need || t === `${need}-friendly`);
+        if (!ok) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.rating - a.rating);
 }
 
-export function checkAvailability(r: Restaurant | undefined, input: { earliest?: string; party?: number }) {
+export function checkAvailability(
+  r: Restaurant | undefined,
+  input: { earliest?: string; party?: number },
+) {
   if (!r) return { available: false, slots: [] as string[], reason: "Unknown restaurant" };
   const slots = r.slots.filter((s) => toMinutes(s) >= toMinutes(input.earliest ?? "00:00"));
   return {
@@ -210,18 +220,24 @@ export function filterEvents(
     maxDriveMinutes = 60,
     avoid = [],
   } = input;
-  return pool.filter((e) => {
-    if (category && e.category !== category.toLowerCase()) return false;
-    if (toMinutes(e.start) < toMinutes(earliest)) return false;
-    if (toMinutes(e.start) + e.durationMinutes > toMinutes(latestEnd)) return false;
-    if (e.pricePerTicket > maxPricePerTicket) return false;
-    if (driveMinutes(e.at) > maxDriveMinutes) return false;
-    if (matchesAvoid([e.category, e.name, e.venue, e.blurb], avoid)) return false;
-    return true;
-  }).sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
+  return pool
+    .filter((e) => {
+      if (category && e.category !== category.toLowerCase()) return false;
+      if (toMinutes(e.start) < toMinutes(earliest)) return false;
+      if (toMinutes(e.start) + e.durationMinutes > toMinutes(latestEnd)) return false;
+      if (e.pricePerTicket > maxPricePerTicket) return false;
+      if (driveMinutes(e.at) > maxDriveMinutes) return false;
+      if (matchesAvoid([e.category, e.name, e.venue, e.blurb], avoid)) return false;
+      return true;
+    })
+    .sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
 }
 
-export function findParkingNear(pool: ParkingSpot[], anchor: LatLng | undefined, input: { maxWalkMinutes?: number } = {}) {
+export function findParkingNear(
+  pool: ParkingSpot[],
+  anchor: LatLng | undefined,
+  input: { maxWalkMinutes?: number } = {},
+) {
   if (!anchor) return [];
   return pool
     .map((p) => ({ ...p, walkMinutes: walkMinutes(anchor, p.at) }))
@@ -231,7 +247,15 @@ export function findParkingNear(pool: ParkingSpot[], anchor: LatLng | undefined,
 
 /* ------------------------------------------------------------ planner ---- */
 
-function buildLegs(r: Restaurant, time: string, e: EventItem, spot: ParkingSpot | null, c: Constraints, hop: Hop, parkWalk: number): PlanLeg[] {
+function buildLegs(
+  r: Restaurant,
+  time: string,
+  e: EventItem,
+  spot: ParkingSpot | null,
+  c: Constraints,
+  hop: Hop,
+  parkWalk: number,
+): PlanLeg[] {
   const dinnerEnd = fromMinutes(toMinutes(time) + mealMinutes(r));
   const legs: PlanLeg[] = [];
   if (spot) {
@@ -312,7 +336,9 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
     maxDriveMinutes: c.maxDriveMinutes,
     avoid: c.avoid,
   });
-  trace.push(`filter → ${events.length} of ${pool.events.length} events start after ${fmtTime(c.earliest)} and end by ${fmtTime(c.latestEnd)}`);
+  trace.push(
+    `filter → ${events.length} of ${pool.events.length} events start after ${fmtTime(c.earliest)} and end by ${fmtTime(c.latestEnd)}`,
+  );
 
   const candidates: Plan[] = [];
 
@@ -334,7 +360,9 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
               ? { mode: "drive", minutes: drive }
               : null;
         if (!hop) {
-          bump(`more than a ${c.maxWalkMinutes} min walk or a ${c.maxHopDriveMinutes} min drive between dinner and the event`);
+          bump(
+            `more than a ${c.maxWalkMinutes} min walk or a ${c.maxHopDriveMinutes} min drive between dinner and the event`,
+          );
           continue;
         }
         const eatUntil = toMinutes(time) + mealMinutes(r);
@@ -351,8 +379,12 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
         // the car, so park where you will actually leave it: at the event.
         // Parking is a convenience, not a precondition. Requiring it made the
         // planner useless in exactly the cities with the best nights out.
-        const spot = findParkingNear(pool.parking, hop.mode === "walk" ? r.at : e.at, { maxWalkMinutes: 10 })[0] ?? null;
-        const total = r.pricePerPerson * c.party + e.pricePerTicket * c.party + (spot?.priceForEvening ?? 0);
+        const spot =
+          findParkingNear(pool.parking, hop.mode === "walk" ? r.at : e.at, {
+            maxWalkMinutes: 10,
+          })[0] ?? null;
+        const total =
+          r.pricePerPerson * c.party + e.pricePerTicket * c.party + (spot?.priceForEvening ?? 0);
         if (total > c.budget) {
           bump(`over your ${money(c.budget)} ceiling`);
           continue;
@@ -371,11 +403,16 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
         // "live music", a cinema is a worse answer than a slightly pricier bar
         // with a band in it.
         const interestBoost = c.interests.includes(e.category) ? 4.5 : 0;
-        const cuisineBoost = c.interests.some((i) => `${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(i)) ? 3.5 : 0;
+        const cuisineBoost = c.interests.some((i) =>
+          `${r.cuisine} ${r.tags.join(" ")}`.toLowerCase().includes(i),
+        )
+          ? 3.5
+          : 0;
         // Spend to the target, not to the floor. Symmetric penalty, so this
         // punishes blowing the budget and punishes being needlessly stingy.
         const ratio = total / Math.max(1, c.budget);
-        const budgetFit = 1 - Math.min(1.5, Math.abs(ratio - c.spendTarget) / Math.max(0.25, c.spendTarget));
+        const budgetFit =
+          1 - Math.min(1.5, Math.abs(ratio - c.spendTarget) / Math.max(0.25, c.spendTarget));
         const pacing = 1 - Math.abs(slack - 20) / 60; // ~20 min of slack feels right
         // Having somewhere to park is worth something, just not everything.
         const parkingBonus = spot ? 0.25 : 0;
@@ -409,7 +446,9 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
           legs: buildLegs(r, time, e, spot, c, hop, spot?.walkMinutes ?? 0),
           dinner: { restaurant: r, time, cost: r.pricePerPerson * c.party },
           event: { event: e, cost: e.pricePerTicket * c.party, walkMinutes: hop.minutes, hop },
-          parking: spot ? { spot, cost: spot.priceForEvening, walkMinutes: spot.walkMinutes } : null,
+          parking: spot
+            ? { spot, cost: spot.priceForEvening, walkMinutes: spot.walkMinutes }
+            : null,
           total,
           score,
           headline: `${r.cuisine}, then ${e.category}`,
@@ -421,24 +460,32 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
   }
 
   candidates.sort((a, b) => b.score - a.score);
-  trace.push(`composed ${considered} candidate evenings → ${candidates.length} satisfy every constraint`);
+  trace.push(
+    `composed ${considered} candidate evenings → ${candidates.length} satisfy every constraint`,
+  );
 
   const plan = candidates[0] ?? null;
   // Alternates should be genuinely different, not the same dinner at 19:15 vs 19:30.
   const alternates: Plan[] = [];
   for (const cand of candidates.slice(1)) {
     if (alternates.length >= 2) break;
-    const seenRestaurant = [plan, ...alternates].some((p) => p?.dinner.restaurant.id === cand.dinner.restaurant.id);
+    const seenRestaurant = [plan, ...alternates].some(
+      (p) => p?.dinner.restaurant.id === cand.dinner.restaurant.id,
+    );
     const seenEvent = [plan, ...alternates].some((p) => p?.event.event.id === cand.event.event.id);
     if (seenRestaurant && seenEvent) continue;
     alternates.push(cand);
   }
 
   if (plan) {
-    trace.push(`best: ${plan.dinner.restaurant.name} ${fmtTime(plan.dinner.time)} → ${plan.event.event.name} ${fmtTime(plan.event.event.start)} · ${money(plan.total)}`);
+    trace.push(
+      `best: ${plan.dinner.restaurant.name} ${fmtTime(plan.dinner.time)} → ${plan.event.event.name} ${fmtTime(plan.event.event.start)} · ${money(plan.total)}`,
+    );
   } else {
     const worst = Object.entries(rejected).sort((a, b) => b[1] - a[1])[0];
-    trace.push(`nothing satisfies every constraint. Biggest blocker: ${worst?.[0] ?? "unknown"} (${worst?.[1] ?? 0} times)`);
+    trace.push(
+      `nothing satisfies every constraint. Biggest blocker: ${worst?.[0] ?? "unknown"} (${worst?.[1] ?? 0} times)`,
+    );
   }
 
   return { plan, alternates, checks: checkPlan(plan, c), trace, considered, rejected };
@@ -464,7 +511,11 @@ const RELAXATION_LADDER: {
         ? null
         : {
             next: { ...c, maxWalkMinutes: Math.min(30, c.maxWalkMinutes + 10) },
-            note: { label: "walk between stops", from: `${c.maxWalkMinutes} min`, to: `${Math.min(30, c.maxWalkMinutes + 10)} min` },
+            note: {
+              label: "walk between stops",
+              from: `${c.maxWalkMinutes} min`,
+              to: `${Math.min(30, c.maxWalkMinutes + 10)} min`,
+            },
           },
   },
   {
@@ -474,7 +525,11 @@ const RELAXATION_LADDER: {
         ? null
         : {
             next: { ...c, maxHopDriveMinutes: Math.min(35, c.maxHopDriveMinutes + 10) },
-            note: { label: "drive between stops", from: `${c.maxHopDriveMinutes} min`, to: `${Math.min(35, c.maxHopDriveMinutes + 10)} min` },
+            note: {
+              label: "drive between stops",
+              from: `${c.maxHopDriveMinutes} min`,
+              to: `${Math.min(35, c.maxHopDriveMinutes + 10)} min`,
+            },
           },
   },
   {
@@ -483,19 +538,28 @@ const RELAXATION_LADDER: {
     test: (b) => b.includes("finish dinner"),
     apply: (c) => {
       const earlier = fromMinutes(Math.max(16 * 60, toMinutes(c.earliest) - 45));
-      return { next: { ...c, earliest: earlier }, note: { label: "nothing before", from: fmtTime(c.earliest), to: fmtTime(earlier) } };
+      return {
+        next: { ...c, earliest: earlier },
+        note: { label: "nothing before", from: fmtTime(c.earliest), to: fmtTime(earlier) },
+      };
     },
   },
   {
     test: (b) => b.includes("dead hour"),
     apply: (c) => {
       const later = fromMinutes(Math.min(24 * 60 - 1, toMinutes(c.latestEnd) + 60));
-      return { next: { ...c, latestEnd: later }, note: { label: "home by", from: fmtTime(c.latestEnd), to: fmtTime(later) } };
+      return {
+        next: { ...c, latestEnd: later },
+        note: { label: "home by", from: fmtTime(c.latestEnd), to: fmtTime(later) },
+      };
     },
   },
   {
     test: (b) => b.includes("parking"),
-    apply: (c) => ({ next: c, note: { label: "parking", from: "within 10 min", to: "street parking allowed" } }),
+    apply: (c) => ({
+      next: c,
+      note: { label: "parking", from: "within 10 min", to: "street parking allowed" },
+    }),
   },
   {
     test: (b) => b.includes("drive"),
@@ -504,7 +568,11 @@ const RELAXATION_LADDER: {
         ? null
         : {
             next: { ...c, maxDriveMinutes: Math.min(60, c.maxDriveMinutes + 15) },
-            note: { label: "drive from home", from: `${c.maxDriveMinutes} min`, to: `${Math.min(60, c.maxDriveMinutes + 15)} min` },
+            note: {
+              label: "drive from home",
+              from: `${c.maxDriveMinutes} min`,
+              to: `${Math.min(60, c.maxDriveMinutes + 15)} min`,
+            },
           },
   },
 ];
@@ -515,7 +583,11 @@ export type RelaxedResult = PlanResult & { relaxations: Relaxation[] };
  * Plan strictly first. Only if that finds nothing, widen the single constraint
  * that did the most blocking, and try again, up to three times.
  */
-export function planWithRelaxation(c: Constraints, pool: CandidatePool, maxSteps = 3): RelaxedResult {
+export function planWithRelaxation(
+  c: Constraints,
+  pool: CandidatePool,
+  maxSteps = 3,
+): RelaxedResult {
   let attempt = planDateNight(c, pool);
   if (attempt.plan) return { ...attempt, relaxations: [] };
 
@@ -548,7 +620,9 @@ export function planWithRelaxation(c: Constraints, pool: CandidatePool, maxSteps
     relaxations.push(widened.note);
     attempt = planDateNight(current, pool);
     if (attempt.plan) {
-      attempt.trace.push(`relaxed ${relaxations.map((r) => `${r.label} ${r.from} to ${r.to}`).join(", ")} to find this`);
+      attempt.trace.push(
+        `relaxed ${relaxations.map((r) => `${r.label} ${r.from} to ${r.to}`).join(", ")} to find this`,
+      );
       return { ...attempt, relaxations };
     }
   }
@@ -572,7 +646,11 @@ export type Shortfall = {
   suggestion: string;
 };
 
-export function diagnose(c: Constraints, pool: CandidatePool, rejected: Record<string, number>): Shortfall {
+export function diagnose(
+  c: Constraints,
+  pool: CandidatePool,
+  rejected: Record<string, number>,
+): Shortfall {
   const top = Object.entries(rejected).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
   if (!pool.restaurants.length || !pool.events.length) {
@@ -588,7 +666,11 @@ export function diagnose(c: Constraints, pool: CandidatePool, rejected: Record<s
     const uncapped = planDateNight({ ...c, budget: Number.MAX_SAFE_INTEGER }, pool);
     const cheapest = uncapped.plan;
     if (cheapest) {
-      const breakdown = { dinner: cheapest.dinner.cost, tickets: cheapest.event.cost, parking: cheapest.parking?.cost ?? 0 };
+      const breakdown = {
+        dinner: cheapest.dinner.cost,
+        tickets: cheapest.event.cost,
+        parking: cheapest.parking?.cost ?? 0,
+      };
       return {
         reason: "budget",
         cheapestTotal: cheapest.total,
@@ -615,27 +697,53 @@ export function diagnose(c: Constraints, pool: CandidatePool, rejected: Record<s
 export function checkPlan(plan: Plan | null, c: Constraints): CheckRow[] {
   if (!plan) return [];
   const endsAt = plan.legs.reduce((max, l) => Math.max(max, toMinutes(l.end)), 0);
-  const maxDrive = Math.max(driveMinutes(plan.dinner.restaurant.at), driveMinutes(plan.event.event.at));
+  const maxDrive = Math.max(
+    driveMinutes(plan.dinner.restaurant.at),
+    driveMinutes(plan.event.event.at),
+  );
   return [
-    { label: "Total spend", target: `≤ ${money(c.budget)}`, actual: money(plan.total), ok: plan.total <= c.budget },
+    {
+      label: "Total spend",
+      target: `≤ ${money(c.budget)}`,
+      actual: money(plan.total),
+      ok: plan.total <= c.budget,
+    },
     {
       label: "Nothing before",
       target: fmtTime(c.earliest),
       actual: fmtTime(plan.dinner.time),
       ok: toMinutes(plan.dinner.time) >= toMinutes(c.earliest),
     },
-    { label: "Home by", target: fmtTime(c.latestEnd), actual: fmtTime(fromMinutes(endsAt)), ok: endsAt <= toMinutes(c.latestEnd) },
-    { label: "Drive from home", target: `≤ ${c.maxDriveMinutes} min`, actual: `${maxDrive} min`, ok: maxDrive <= c.maxDriveMinutes },
+    {
+      label: "Home by",
+      target: fmtTime(c.latestEnd),
+      actual: fmtTime(fromMinutes(endsAt)),
+      ok: endsAt <= toMinutes(c.latestEnd),
+    },
+    {
+      label: "Drive from home",
+      target: `≤ ${c.maxDriveMinutes} min`,
+      actual: `${maxDrive} min`,
+      ok: maxDrive <= c.maxDriveMinutes,
+    },
     {
       label: plan.event.hop.mode === "walk" ? "Walk between stops" : "Drive between stops",
-      target: plan.event.hop.mode === "walk" ? `≤ ${c.maxWalkMinutes} min walk` : `≤ ${c.maxHopDriveMinutes} min drive`,
+      target:
+        plan.event.hop.mode === "walk"
+          ? `≤ ${c.maxWalkMinutes} min walk`
+          : `≤ ${c.maxHopDriveMinutes} min drive`,
       actual: `${plan.event.hop.minutes} min`,
       ok:
         plan.event.hop.mode === "walk"
           ? plan.event.hop.minutes <= c.maxWalkMinutes
           : plan.event.hop.minutes <= c.maxHopDriveMinutes,
     },
-    { label: "Party size", target: `${c.party}`, actual: `${c.party} seats held`, ok: plan.event.event.seatsLeft >= c.party },
+    {
+      label: "Party size",
+      target: `${c.party}`,
+      actual: `${c.party} seats held`,
+      ok: plan.event.event.seatsLeft >= c.party,
+    },
     ...(c.dietary.length
       ? [
           {
@@ -672,7 +780,12 @@ export type RefineOp =
   | "fancier";
 
 export function refineConstraints(c: Constraints, op: RefineOp, plan: Plan | null): Constraints {
-  const next: Constraints = { ...c, interests: [...c.interests], avoid: [...c.avoid], dietary: [...c.dietary] };
+  const next: Constraints = {
+    ...c,
+    interests: [...c.interests],
+    avoid: [...c.avoid],
+    dietary: [...c.dietary],
+  };
   switch (op) {
     case "cheaper":
       next.budget = Math.max(40, Math.round((plan ? plan.total : c.budget) * 0.75));
@@ -687,7 +800,10 @@ export function refineConstraints(c: Constraints, op: RefineOp, plan: Plan | nul
       next.noisePreference = "quiet";
       break;
     case "shorter_walk":
-      next.maxWalkMinutes = Math.max(2, Math.min(c.maxWalkMinutes, plan ? plan.event.walkMinutes - 1 : c.maxWalkMinutes - 3));
+      next.maxWalkMinutes = Math.max(
+        2,
+        Math.min(c.maxWalkMinutes, plan ? plan.event.walkMinutes - 1 : c.maxWalkMinutes - 3),
+      );
       break;
     case "fancier":
       next.budget = Math.round(c.budget * 1.5);
@@ -714,19 +830,36 @@ export type Booking = {
   approvalId: string;
 };
 
-const code = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+const code = (prefix: string) =>
+  `${prefix}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 
 export function reserveTable(r: Restaurant | undefined, input: { time: string; party: number }) {
   if (!r) return { ok: false as const, error: "Unknown restaurant" };
   if (!r.slots.includes(input.time))
-    return { ok: false as const, error: `${r.name} has no ${fmtTime(input.time)} slot. Open: ${r.slots.map(fmtTime).join(", ")}` };
-  return { ok: true as const, confirmation: code("TBL"), restaurant: r.name, time: input.time, party: input.party };
+    return {
+      ok: false as const,
+      error: `${r.name} has no ${fmtTime(input.time)} slot. Open: ${r.slots.map(fmtTime).join(", ")}`,
+    };
+  return {
+    ok: true as const,
+    confirmation: code("TBL"),
+    restaurant: r.name,
+    time: input.time,
+    party: input.party,
+  };
 }
 
 export function reserveTickets(e: EventItem | undefined, input: { quantity: number }) {
   if (!e) return { ok: false as const, error: "Unknown event" };
-  if (e.seatsLeft < input.quantity) return { ok: false as const, error: `Only ${e.seatsLeft} seats left` };
-  return { ok: true as const, confirmation: code("TIX"), event: e.name, quantity: input.quantity, start: e.start };
+  if (e.seatsLeft < input.quantity)
+    return { ok: false as const, error: `Only ${e.seatsLeft} seats left` };
+  return {
+    ok: true as const,
+    confirmation: code("TIX"),
+    event: e.name,
+    quantity: input.quantity,
+    start: e.start,
+  };
 }
 
 export function reserveSpot(p: ParkingSpot | undefined, input: { arriveBy: string }) {
@@ -735,9 +868,14 @@ export function reserveSpot(p: ParkingSpot | undefined, input: { arriveBy: strin
 }
 
 export function bookPlan(plan: Plan, approvalId: string): Booking {
-  const table = reserveTable(plan.dinner.restaurant, { time: plan.dinner.time, party: plan.constraints.party });
+  const table = reserveTable(plan.dinner.restaurant, {
+    time: plan.dinner.time,
+    party: plan.constraints.party,
+  });
   const tickets = reserveTickets(plan.event.event, { quantity: plan.constraints.party });
-  const parking = plan.parking ? reserveSpot(plan.parking.spot, { arriveBy: plan.legs[0]!.start }) : null;
+  const parking = plan.parking
+    ? reserveSpot(plan.parking.spot, { arriveBy: plan.legs[0]!.start })
+    : null;
 
   return {
     confirmation: code("GENIE"),
@@ -774,7 +912,20 @@ export function bookPlan(plan: Plan, approvalId: string): Booking {
 
 /* --------------------------------------------- natural language input ---- */
 
-const CUISINES = ["korean", "seafood", "oyster", "mexican", "indian", "steak", "japanese", "french", "mediterranean", "salvadoran", "vegan", "noodle"];
+const CUISINES = [
+  "korean",
+  "seafood",
+  "oyster",
+  "mexican",
+  "indian",
+  "steak",
+  "japanese",
+  "french",
+  "mediterranean",
+  "salvadoran",
+  "vegan",
+  "noodle",
+];
 
 /**
  * What you do after dinner, as opposed to what you eat. Keeping these apart
@@ -790,12 +941,34 @@ const CATEGORIES = [...ACTIVITY_CATEGORIES];
  * Models and humans both say "movie" far more often than "film".
  */
 const ACTIVITY_SYNONYMS: Record<string, string> = {
-  movie: "film", movies: "film", cinema: "film", screening: "film", "a movie": "film",
-  concert: "music", band: "music", bands: "music", dj: "music", gig: "music", jazz: "music",
-  "live music": "music", "live band": "music",
-  standup: "comedy", "stand-up": "comedy", "stand up": "comedy", comedian: "comedy", funny: "comedy",
-  play: "theater", show: "theater", theatre: "theater", musical: "theater", shakespeare: "theater",
-  workshop: "class", pottery: "class", clay: "class", painting: "class", "making something": "class",
+  movie: "film",
+  movies: "film",
+  cinema: "film",
+  screening: "film",
+  "a movie": "film",
+  concert: "music",
+  band: "music",
+  bands: "music",
+  dj: "music",
+  gig: "music",
+  jazz: "music",
+  "live music": "music",
+  "live band": "music",
+  standup: "comedy",
+  "stand-up": "comedy",
+  "stand up": "comedy",
+  comedian: "comedy",
+  funny: "comedy",
+  play: "theater",
+  show: "theater",
+  theatre: "theater",
+  musical: "theater",
+  shakespeare: "theater",
+  workshop: "class",
+  pottery: "class",
+  clay: "class",
+  painting: "class",
+  "making something": "class",
 };
 
 /** Reduce a free-text interest to a canonical activity, or null if it is food. */
@@ -817,17 +990,22 @@ export function toCuisine(term: string): string | null {
   const cleaned = t.replace(/\b(food|cuisine|restaurant|place|spot|joint)\b/g, "").trim();
   if (!cleaned || cleaned.length < 3) return null;
   // Upstream cuisine tags are single tokens. Take the most specific word.
-  const word = cleaned.split(/\s+/).filter((w) => w.length > 2).pop();
+  const word = cleaned
+    .split(/\s+/)
+    .filter((w) => w.length > 2)
+    .pop();
   return word ?? null;
 }
 
 /** The subset of stated interests that name food. */
-export const cuisineInterests = (c: Constraints): string[] =>
-  [...new Set(c.interests.map(toCuisine).filter((x): x is string => Boolean(x)))];
+export const cuisineInterests = (c: Constraints): string[] => [
+  ...new Set(c.interests.map(toCuisine).filter((x): x is string => Boolean(x))),
+];
 
 /** The subset that names something to do afterwards. */
-export const activityInterests = (c: Constraints): string[] =>
-  [...new Set(c.interests.map(toActivity).filter((x): x is string => Boolean(x)))];
+export const activityInterests = (c: Constraints): string[] => [
+  ...new Set(c.interests.map(toActivity).filter((x): x is string => Boolean(x))),
+];
 
 /**
  * Pull a place name out of the raw request, preserving its capitalisation so
@@ -839,7 +1017,8 @@ export function extractLocation(text: string): string | null {
     /(?:we(?:'| a)?re|i(?:'m| am)|we are)\s+(?:in|near|around|based in)\s+([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2}(?:,\s*[A-Za-z]{2,})?)/,
     /\b(?:in|near|around)\s+([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2}(?:,\s*[A-Za-z]{2,})?)/,
   ];
-  const STOPWORDS = /^(Friday|Saturday|Sunday|Monday|Tuesday|Wednesday|Thursday|Keep|Plan|Something|The|My|Our|We|It|A|An|I)$/i;
+  const STOPWORDS =
+    /^(Friday|Saturday|Sunday|Monday|Tuesday|Wednesday|Thursday|Keep|Plan|Something|The|My|Our|We|It|A|An|I)$/i;
   for (const re of patterns) {
     const m = text.match(re);
     const raw = m?.[1]?.trim().replace(/[.,;]$/, "");
@@ -852,9 +1031,16 @@ export function extractLocation(text: string): string | null {
 
 export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAINTS): Constraints {
   const t = text.toLowerCase();
-  const c: Constraints = { ...base, interests: [], avoid: [...base.avoid], dietary: [...base.dietary] };
+  const c: Constraints = {
+    ...base,
+    interests: [],
+    avoid: [...base.avoid],
+    dietary: [...base.dietary],
+  };
 
-  const budget = t.match(/(?:under|below|max|budget of|less than|no more than)\s*\$?\s*(\d{2,4})/) ?? t.match(/\$\s*(\d{2,4})/);
+  const budget =
+    t.match(/(?:under|below|max|budget of|less than|no more than)\s*\$?\s*(\d{2,4})/) ??
+    t.match(/\$\s*(\d{2,4})/);
   if (budget?.[1]) c.budget = Number(budget[1]);
 
   const drive = t.match(/(\d{1,3})\s*(?:-|\s)?min(?:ute)?s?\s*(?:drive|away|of driving)?/);
@@ -863,14 +1049,18 @@ export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAIN
   const walk = t.match(/walk(?:ing)?\s*(?:no more than\s*)?(\d{1,2})\s*min/);
   if (walk?.[1]) c.maxWalkMinutes = Number(walk[1]);
 
-  const after = t.match(/(?:nothing before|no earlier than|after|not before|starting at|start(?:ing)? around)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  const after = t.match(
+    /(?:nothing before|no earlier than|after|not before|starting at|start(?:ing)? around)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/,
+  );
   if (after?.[1]) {
     let h = Number(after[1]);
     if ((after[3] === "pm" || (!after[3] && h <= 11)) && h < 12) h += 12;
     c.earliest = `${String(h).padStart(2, "0")}:${after[2] ?? "00"}`;
   }
 
-  const home = t.match(/(?:home by|back by|done by|end(?:ed)? by|over by)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  const home = t.match(
+    /(?:home by|back by|done by|end(?:ed)? by|over by)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/,
+  );
   if (home?.[1]) {
     let h = Number(home[1]);
     if ((home[3] === "pm" || (!home[3] && h <= 11)) && h < 12) h += 12;
@@ -879,7 +1069,8 @@ export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAIN
 
   const party = t.match(/(?:party of|table for|for)\s*(\d{1,2})\s*(?:people|of us|adults)/);
   if (party?.[1]) c.party = Number(party[1]);
-  else if (/\b(me and my|my)\s+(girlfriend|boyfriend|wife|husband|partner|date)\b/.test(t)) c.party = 2;
+  else if (/\b(me and my|my)\s+(girlfriend|boyfriend|wife|husband|partner|date)\b/.test(t))
+    c.party = 2;
 
   for (const k of CATEGORIES) if (t.includes(k)) c.interests.push(k);
   if (/movie|cinema|screening/.test(t)) c.interests.push("film");
@@ -894,19 +1085,28 @@ export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAIN
   if (/gluten[- ]free/.test(t)) c.dietary.push("gluten-free");
 
   // "no seafood", "hates oysters", "nothing loud", "not Korean"
-  const negations = t.matchAll(/(?:no|not|nothing|hates?|allergic to|avoid|can't do|cant do|skip the?)\s+([a-z][a-z\- ]{2,20}?)(?:[.,;]|$|\sand\s|\sbut\s)/g);
+  const negations = t.matchAll(
+    /(?:no|not|nothing|hates?|allergic to|avoid|can't do|cant do|skip the?)\s+([a-z][a-z\- ]{2,20}?)(?:[.,;]|$|\sand\s|\sbut\s)/g,
+  );
   for (const m of negations) {
     const term = (m[1] ?? "").trim();
     if (!term) continue;
     if (/^(before|earlier|later|too|more|less|much|than|driving|drive|far)/.test(term)) continue;
-    const hit = [...CUISINES, ...CATEGORIES, "loud", "shellfish", "meat", "spicy", "jacket"].find((k) => term.includes(k));
+    const hit = [...CUISINES, ...CATEGORIES, "loud", "shellfish", "meat", "spicy", "jacket"].find(
+      (k) => term.includes(k),
+    );
     if (hit) c.avoid.push(hit === "oyster" ? "oysters" : hit);
   }
-  if (/\b(quiet|somewhere quiet|not too loud|low.key|lowkey|conversation)\b/.test(t)) c.noisePreference = "quiet";
+  if (/\b(quiet|somewhere quiet|not too loud|low.key|lowkey|conversation)\b/.test(t))
+    c.noisePreference = "quiet";
 
   // A ceiling means different things to different nights.
-  if (/\b(cheap|budget|affordable|inexpensive|on a budget|not too expensive)\b/.test(t)) c.spendTarget = 0.45;
-  else if (/\b(anniversary|birthday|celebrat|special|splash out|somewhere nice|fancy|treat)\b/.test(t)) c.spendTarget = 0.85;
+  if (/\b(cheap|budget|affordable|inexpensive|on a budget|not too expensive)\b/.test(t))
+    c.spendTarget = 0.45;
+  else if (
+    /\b(anniversary|birthday|celebrat|special|splash out|somewhere nice|fancy|treat)\b/.test(t)
+  )
+    c.spendTarget = 0.85;
 
   c.avoid = [...new Set(c.avoid)];
   c.dietary = [...new Set(c.dietary)];

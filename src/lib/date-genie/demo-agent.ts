@@ -23,7 +23,9 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Step = { say: string; run: () => Promise<unknown>; pause?: number };
 
 function tokenFrom(result: unknown): string | null {
-  const sc = (result as { structuredContent?: { approvalToken?: string; approved?: boolean } } | undefined)?.structuredContent;
+  const sc = (
+    result as { structuredContent?: { approvalToken?: string; approved?: boolean } } | undefined
+  )?.structuredContent;
   return sc?.approved && sc.approvalToken ? sc.approvalToken : null;
 }
 

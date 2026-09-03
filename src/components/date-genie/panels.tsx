@@ -12,6 +12,7 @@ import { fmtTime, money, toMinutes, type Plan } from "@/lib/date-genie/engine";
 import * as store from "@/lib/date-genie/store";
 import { callTool } from "@/lib/date-genie/webmcp";
 import { allTools } from "@/lib/date-genie/tools";
+import { ACTIVE_ADAPTERS, WANTED_SOURCES } from "@/lib/date-genie/sources/registry";
 
 /* --------------------------------------------------------------- hook ---- */
 
@@ -40,8 +41,12 @@ function Panel({
     <section className={`surface p-4 sm:p-5 ${className}`}>
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-sm font-semibold tracking-wide text-foreground uppercase">{title}</h2>
-          {hint ? <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{hint}</p> : null}
+          <h2 className="font-display text-sm font-semibold tracking-wide text-foreground uppercase">
+            {title}
+          </h2>
+          {hint ? (
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{hint}</p>
+          ) : null}
         </div>
         {right}
       </header>
@@ -80,7 +85,11 @@ export function StatusPill() {
       </span>
       <span
         className="rule-chip"
-        title={live ? `Tools registered on ${webmcp.surface}` : "No WebMCP host detected. The page still works, and the built-in agent drives the identical tools"}
+        title={
+          live
+            ? `Tools registered on ${webmcp.surface}`
+            : "No WebMCP host detected. The page still works, and the built-in agent drives the identical tools"
+        }
       >
         <span
           className={`size-1.5 rounded-full ${live ? "bg-accent dg-live-dot" : "bg-muted-foreground"}`}
@@ -98,14 +107,23 @@ export function StatusPill() {
 
 /* -------------------------------------------------------- command bar ---- */
 
-export function CommandBar({ onRun, samples }: { onRun: (text: string) => void; samples: string[] }) {
+export function CommandBar({
+  onRun,
+  samples,
+}: {
+  onRun: (text: string) => void;
+  samples: string[];
+}) {
   const { demoRunning, searching } = useGenie();
   const [text, setText] = useState(samples[0] ?? "");
   const busy = demoRunning || searching;
 
   return (
     <div className="surface glow-ring p-4 sm:p-5">
-      <label htmlFor="wish" className="mb-2 block font-display text-xs font-semibold tracking-widest text-primary uppercase">
+      <label
+        htmlFor="wish"
+        className="mb-2 block font-display text-xs font-semibold tracking-widest text-primary uppercase"
+      >
         Say it once
       </label>
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -143,8 +161,11 @@ export function CommandBar({ onRun, samples }: { onRun: (text: string) => void; 
         ))}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        In a WebMCP browser, say this to your agent instead. It calls the same tools this button does.
-        <kbd className="ml-2 rounded border border-border px-1.5 py-0.5 font-mono text-[10px]">⌘↵</kbd>
+        In a WebMCP browser, say this to your agent instead. It calls the same tools this button
+        does.
+        <kbd className="ml-2 rounded border border-border px-1.5 py-0.5 font-mono text-[10px]">
+          ⌘↵
+        </kbd>
       </p>
     </div>
   );
@@ -211,9 +232,14 @@ export function ConstraintDeck() {
       >
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <span className="text-xs text-muted-foreground">Tonight you are in</span>
-          {searching ? <span className="font-mono text-[10px] text-primary dg-live-dot">searching…</span> : null}
+          {searching ? (
+            <span className="font-mono text-[10px] text-primary dg-live-dot">searching…</span>
+          ) : null}
         </div>
-        <p className="mb-2 truncate font-display text-sm font-semibold text-foreground" title={place?.label ?? ""}>
+        <p
+          className="mb-2 truncate font-display text-sm font-semibold text-foreground"
+          title={place?.label ?? ""}
+        >
           {place?.label ?? "not set"}
         </p>
         <div className="flex gap-2">
@@ -243,14 +269,22 @@ export function ConstraintDeck() {
           <p className="mt-2 text-[11px] leading-relaxed text-destructive">{notice}</p>
         ) : (
           <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/70">
-            Anywhere in the world. Nothing about any place is stored: each search queries the sources fresh with your
-            filters compiled in.
+            Anywhere in the world. Nothing about any place is stored: each search queries the
+            sources fresh with your filters compiled in.
           </p>
         )}
       </form>
 
       <div className="space-y-4">
-        <Dial label="Whole evening, all in" value={c.budget} display={money(c.budget)} min={40} max={400} step={5} onChange={(budget) => patch({ budget })} />
+        <Dial
+          label="Whole evening, all in"
+          value={c.budget}
+          display={money(c.budget)}
+          min={40}
+          max={400}
+          step={5}
+          onChange={(budget) => patch({ budget })}
+        />
         <Dial
           label="Nothing before"
           value={toMinutes(c.earliest)}
@@ -258,7 +292,11 @@ export function ConstraintDeck() {
           min={16 * 60}
           max={21 * 60}
           step={15}
-          onChange={(m) => patch({ earliest: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}` })}
+          onChange={(m) =>
+            patch({
+              earliest: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`,
+            })
+          }
         />
         <Dial
           label="Home by"
@@ -267,10 +305,28 @@ export function ConstraintDeck() {
           min={21 * 60}
           max={23 * 60 + 59}
           step={15}
-          onChange={(m) => patch({ latestEnd: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}` })}
+          onChange={(m) =>
+            patch({
+              latestEnd: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`,
+            })
+          }
         />
-        <Dial label="Drive from home" value={c.maxDriveMinutes} display={`${c.maxDriveMinutes} min`} min={5} max={45} onChange={(maxDriveMinutes) => patch({ maxDriveMinutes })} />
-        <Dial label="Walk between stops" value={c.maxWalkMinutes} display={`${c.maxWalkMinutes} min`} min={2} max={25} onChange={(maxWalkMinutes) => patch({ maxWalkMinutes })} />
+        <Dial
+          label="Drive from home"
+          value={c.maxDriveMinutes}
+          display={`${c.maxDriveMinutes} min`}
+          min={5}
+          max={45}
+          onChange={(maxDriveMinutes) => patch({ maxDriveMinutes })}
+        />
+        <Dial
+          label="Walk between stops"
+          value={c.maxWalkMinutes}
+          display={`${c.maxWalkMinutes} min`}
+          min={2}
+          max={25}
+          onChange={(maxWalkMinutes) => patch({ maxWalkMinutes })}
+        />
 
         <div>
           <div className="mb-1.5 flex items-baseline justify-between">
@@ -284,7 +340,9 @@ export function ConstraintDeck() {
                 type="button"
                 onClick={() => patch({ party: n })}
                 className={`flex-1 rounded-lg border py-1.5 font-mono text-xs transition ${
-                  c.party === n ? "border-primary bg-primary/15 text-foreground" : "border-border text-muted-foreground hover:text-foreground"
+                  c.party === n
+                    ? "border-primary bg-primary/15 text-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {n}
@@ -299,7 +357,9 @@ export function ConstraintDeck() {
           Never again. Saved in this browser, and the genie honours these on your next visit too.
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {vetoes.length === 0 ? <span className="text-xs text-muted-foreground/70">Nothing ruled out yet.</span> : null}
+          {vetoes.length === 0 ? (
+            <span className="text-xs text-muted-foreground/70">Nothing ruled out yet.</span>
+          ) : null}
           {vetoes.map((v) => (
             <button
               key={v}
@@ -330,7 +390,10 @@ export function ConstraintDeck() {
             placeholder="oysters, loud, korean…"
             className="min-w-0 flex-1 rounded-lg border border-input bg-ink/60 px-3 py-1.5 text-xs outline-none focus:border-primary/70"
           />
-          <button type="submit" className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground">
+          <button
+            type="submit"
+            className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground"
+          >
             Rule out
           </button>
         </form>
@@ -343,15 +406,22 @@ export function ConstraintDeck() {
 
 function Leg({ leg, index }: { leg: Plan["legs"][number]; index: number }) {
   return (
-    <li className="dg-rise relative flex gap-4 pb-6 last:pb-0" style={{ animationDelay: `${index * 90}ms` }}>
+    <li
+      className="dg-rise relative flex gap-4 pb-6 last:pb-0"
+      style={{ animationDelay: `${index * 90}ms` }}
+    >
       <div className="flex w-14 shrink-0 flex-col items-end pt-1">
-        <span className="font-mono text-xs font-semibold text-foreground">{fmtTime(leg.start)}</span>
+        <span className="font-mono text-xs font-semibold text-foreground">
+          {fmtTime(leg.start)}
+        </span>
         <span className="font-mono text-[10px] text-muted-foreground">{fmtTime(leg.end)}</span>
       </div>
       <div className="relative flex flex-col items-center">
         <span
           className={`z-10 grid size-9 place-items-center rounded-full border text-base ${
-            leg.kind === "parking" ? "border-border bg-secondary" : "border-primary/50 bg-primary/15"
+            leg.kind === "parking"
+              ? "border-border bg-secondary"
+              : "border-primary/50 bg-primary/15"
           }`}
         >
           {leg.glyph}
@@ -360,7 +430,9 @@ function Leg({ leg, index }: { leg: Plan["legs"][number]; index: number }) {
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex items-baseline justify-between gap-3">
-          <h3 className="truncate font-display text-base font-semibold text-foreground">{leg.title}</h3>
+          <h3 className="truncate font-display text-base font-semibold text-foreground">
+            {leg.title}
+          </h3>
           <span className="shrink-0 font-mono text-sm text-primary">{money(leg.cost)}</span>
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">{leg.subtitle}</p>
@@ -380,7 +452,9 @@ function ChecksTable({ checks }: { checks: store.State["checks"] }) {
       <ul className="grid gap-1.5 sm:grid-cols-2">
         {checks.map((c) => (
           <li key={c.label} className="flex items-center gap-2 text-xs">
-            <span className={`grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-bold ${c.ok ? "bg-accent/20 text-accent" : "bg-destructive/20 text-destructive"}`}>
+            <span
+              className={`grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-bold ${c.ok ? "bg-accent/20 text-accent" : "bg-destructive/20 text-destructive"}`}
+            >
               {c.ok ? "✓" : "✕"}
             </span>
             <span className="text-muted-foreground">{c.label}</span>
@@ -394,7 +468,21 @@ function ChecksTable({ checks }: { checks: store.State["checks"] }) {
 }
 
 export function Stage() {
-  const { plan, alternates, checks, considered, booking, searching, revision, trace, relaxations, place, notice, pool } = useGenie();
+  const {
+    plan,
+    alternates,
+    checks,
+    considered,
+    booking,
+    searching,
+    revision,
+    trace,
+    relaxations,
+    place,
+    notice,
+    pool,
+    shortfall,
+  } = useGenie();
   const [showTrace, setShowTrace] = useState(false);
 
   if (booking) return <Receipt />;
@@ -404,14 +492,48 @@ export function Stage() {
       <Panel title="The evening" hint="Nothing planned yet.">
         <div className="py-12 text-center">
           <p className="font-display text-lg text-muted-foreground">
-            {searching ? <span className="dg-shimmer">Searching…</span> : place ? "Say what you want. Once." : "Tell me where you are."}
+            {searching ? (
+              <span className="dg-shimmer">Searching…</span>
+            ) : place ? (
+              "Say what you want. Once."
+            ) : (
+              "Tell me where you are."
+            )}
           </p>
-          <p className="mx-auto mt-2 max-w-sm text-xs text-muted-foreground/70">
+          <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-muted-foreground/70">
             {notice ??
               (trace.length
                 ? trace[trace.length - 1]
                 : "Dinner, something after, and somewhere to park, solved together, not one tab at a time.")}
           </p>
+          {shortfall?.reason === "budget" && shortfall.breakdown ? (
+            <div className="mx-auto mt-4 max-w-sm rounded-xl border border-primary/40 bg-primary/10 p-3 text-left">
+              <p className="font-display text-xs font-semibold tracking-widest text-primary uppercase">
+                The maths
+              </p>
+              <ul className="mt-2 space-y-1 font-mono text-[11px] text-foreground">
+                <li className="flex justify-between">
+                  <span>dinner</span>
+                  <span>{money(shortfall.breakdown.dinner)}</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>tickets</span>
+                  <span>{money(shortfall.breakdown.tickets)}</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>parking</span>
+                  <span>{money(shortfall.breakdown.parking)}</span>
+                </li>
+                <li className="flex justify-between border-t border-border pt-1 text-primary">
+                  <span>cheapest that fits your other rules</span>
+                  <span>{money(shortfall.cheapestTotal ?? 0)}</span>
+                </li>
+              </ul>
+              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                {shortfall.suggestion}
+              </p>
+            </div>
+          ) : null}
         </div>
       </Panel>
     );
@@ -488,7 +610,13 @@ export function Stage() {
       <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
         <button
           type="button"
-          onClick={() => void callTool("request_approval", { note: "Holds the table, the tickets and the spot." }, "you")}
+          onClick={() =>
+            void callTool(
+              "request_approval",
+              { note: "Holds the table, the tickets and the spot." },
+              "you",
+            )
+          }
           className="rounded-xl bg-primary px-5 py-2.5 font-display text-sm font-bold text-primary-foreground transition hover:brightness-110"
         >
           Book the whole night
@@ -503,7 +631,11 @@ export function Stage() {
             {op.replace("_", " ")}
           </button>
         ))}
-        <button type="button" onClick={() => setShowTrace((v) => !v)} className="ml-auto text-xs text-muted-foreground underline-offset-4 hover:underline">
+        <button
+          type="button"
+          onClick={() => setShowTrace((v) => !v)}
+          className="ml-auto text-xs text-muted-foreground underline-offset-4 hover:underline"
+        >
           {showTrace ? "hide" : "show"} search trace
         </button>
       </div>
@@ -530,9 +662,15 @@ function Receipt() {
     >
       <ul className="space-y-3">
         {booking.lines.map((l, i) => (
-          <li key={l.confirmation} className="dg-rise flex items-start gap-3 rounded-xl border border-border bg-ink/40 p-3" style={{ animationDelay: `${i * 110}ms` }}>
+          <li
+            key={l.confirmation}
+            className="dg-rise flex items-start gap-3 rounded-xl border border-border bg-ink/40 p-3"
+            style={{ animationDelay: `${i * 110}ms` }}
+          >
             <div className="min-w-0 flex-1">
-              <div className="truncate font-display text-sm font-semibold text-foreground">{l.label}</div>
+              <div className="truncate font-display text-sm font-semibold text-foreground">
+                {l.label}
+              </div>
               <div className="text-xs text-muted-foreground">{l.detail}</div>
               <div className="mt-1 font-mono text-[11px] text-accent">{l.confirmation}</div>
             </div>
@@ -552,7 +690,11 @@ function Receipt() {
         >
           Add all three to calendar
         </button>
-        <button type="button" onClick={() => store.reset()} className="rule-chip transition hover:border-primary/60 hover:text-foreground">
+        <button
+          type="button"
+          onClick={() => store.reset()}
+          className="rule-chip transition hover:border-primary/60 hover:text-foreground"
+        >
           Plan another night
         </button>
       </div>
@@ -587,11 +729,13 @@ export function ApprovalSheet() {
             Your agent is waiting on you
           </p>
         </div>
-        <p className="mt-3 font-display text-lg leading-snug font-semibold text-foreground">{approval.summary}</p>
+        <p className="mt-3 font-display text-lg leading-snug font-semibold text-foreground">
+          {approval.summary}
+        </p>
         <p className="mt-1 font-mono text-sm text-primary">{money(approval.total)} total</p>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-          The tool call is suspended right now. It has no timeout and no default. It resolves when you press one of
-          these, and not before.
+          The tool call is suspended right now. It has no timeout and no default. It resolves when
+          you press one of these, and not before.
         </p>
         <input
           value={note}
@@ -647,7 +791,10 @@ export function ToolConsole() {
       {narration.length ? (
         <div className="mb-4 space-y-1.5">
           {narration.slice(-3).map((n, i) => (
-            <p key={`${n}-${i}`} className="dg-rise text-xs leading-relaxed text-foreground/90 italic">
+            <p
+              key={`${n}-${i}`}
+              className="dg-rise text-xs leading-relaxed text-foreground/90 italic"
+            >
               {n}
             </p>
           ))}
@@ -666,15 +813,25 @@ export function ToolConsole() {
             const isOpen = open === c.id;
             return (
               <li key={c.id} className="dg-rise rounded-lg border border-border bg-ink/40">
-                <button type="button" onClick={() => setOpen(isOpen ? null : c.id)} className="flex w-full items-center gap-2 px-2.5 py-2 text-left">
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : c.id)}
+                  className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
+                >
                   <span
                     className={`size-1.5 shrink-0 rounded-full ${
-                      c.error ? "bg-destructive" : c.ms === undefined ? "bg-primary dg-live-dot" : "bg-accent"
+                      c.error
+                        ? "bg-destructive"
+                        : c.ms === undefined
+                          ? "bg-primary dg-live-dot"
+                          : "bg-accent"
                     }`}
                     aria-hidden
                   />
                   <span className="truncate font-mono text-[11px] text-foreground">{c.name}</span>
-                  <span className="truncate font-mono text-[10px] text-muted-foreground/60">{argPreview(c.args)}</span>
+                  <span className="truncate font-mono text-[10px] text-muted-foreground/60">
+                    {argPreview(c.args)}
+                  </span>
                   <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
                     {c.caller === "agent" ? "agent" : c.caller === "you" ? "you" : "demo"}
                     {c.ms !== undefined ? ` · ${c.ms}ms` : " · …"}
@@ -694,6 +851,83 @@ export function ToolConsole() {
   );
 }
 
+/* ------------------------------------------------------------ sources ---- */
+
+export function SourcesPanel() {
+  const { pool, understanding } = useGenie();
+  return (
+    <Panel
+      title="Where this came from"
+      hint="Nothing about any place is stored in this page. Every plan above is a fresh search issued when you asked, with your filters compiled into the query."
+    >
+      <ul className="space-y-1.5">
+        {ACTIVE_ADAPTERS.map((a) => {
+          const report = pool?.reports.find((r) => r.id === a.id);
+          return (
+            <li
+              key={a.id}
+              className="flex items-center gap-2 rounded-lg border border-accent/30 bg-ink/40 px-2.5 py-2 text-xs"
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+              <span className="font-medium text-foreground">{a.label}</span>
+              <span className="truncate text-muted-foreground">{a.attribution}</span>
+              {report ? (
+                <span className="ml-auto shrink-0 font-mono text-[10px] text-accent">
+                  {report.counts.restaurants}r · {report.counts.events}e · {report.counts.parking}p
+                  · {report.ms}ms
+                </span>
+              ) : (
+                <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+                  idle
+                </span>
+              )}
+            </li>
+          );
+        })}
+        <li className="flex items-center gap-2 rounded-lg border border-accent/30 bg-ink/40 px-2.5 py-2 text-xs">
+          <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+          <span className="font-medium text-foreground">Cloudflare Workers AI</span>
+          <span className="truncate text-muted-foreground">
+            turns your sentence into constraints
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-accent">
+            {understanding
+              ? understanding.via === "workers-ai"
+                ? "llama 3.3 70b"
+                : "rules fallback"
+              : "idle"}
+          </span>
+        </li>
+      </ul>
+
+      <p className="mt-4 mb-2 font-display text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+        Not available to any agent, anywhere
+      </p>
+      <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+        No major booking site exposes WebMCP tools yet, so no agent can compose them. Here is
+        exactly what we would call the day they do. If you work at one of these, this is the whole
+        ask.
+      </p>
+      <ul className="space-y-1.5">
+        {WANTED_SOURCES.map((a) => (
+          <li key={a.id} className="rounded-lg border border-border bg-ink/40 px-2.5 py-2">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" aria-hidden />
+              <span className="font-medium text-foreground">{a.label}</span>
+              <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                {a.provides.join(", ")}
+              </span>
+            </div>
+            <code className="mt-1 block font-mono text-[10px] leading-relaxed text-muted-foreground/80">
+              {a.wantedContract}
+            </code>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
 /* -------------------------------------------------------- tool surface ---- */
 
 export function ToolSurface() {
@@ -707,7 +941,11 @@ export function ToolSurface() {
       title="What your agent can do here"
       hint="These are registered on the live WebMCP surface. The last two appear and disappear with page state. An agent cannot call book_approved_plan before a human has approved anything, because until then the tool does not exist."
       right={
-        <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs text-muted-foreground underline-offset-4 hover:underline">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+        >
           {open ? "collapse" : "expand"}
         </button>
       }
@@ -718,14 +956,24 @@ export function ToolSurface() {
             <div className="flex items-center gap-2">
               <code className="truncate font-mono text-[11px] text-primary">{t.name}</code>
               {t.annotations?.readOnlyHint ? (
-                <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[9px] text-muted-foreground">read</span>
+                <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[9px] text-muted-foreground">
+                  read
+                </span>
               ) : t.annotations?.destructiveHint ? (
-                <span className="shrink-0 rounded bg-destructive/20 px-1 py-0.5 text-[9px] text-destructive">books</span>
+                <span className="shrink-0 rounded bg-destructive/20 px-1 py-0.5 text-[9px] text-destructive">
+                  books
+                </span>
               ) : (
-                <span className="shrink-0 rounded bg-primary/15 px-1 py-0.5 text-[9px] text-primary">writes</span>
+                <span className="shrink-0 rounded bg-primary/15 px-1 py-0.5 text-[9px] text-primary">
+                  writes
+                </span>
               )}
             </div>
-            {open ? <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{t.description}</p> : null}
+            {open ? (
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                {t.description}
+              </p>
+            ) : null}
           </li>
         ))}
       </ul>

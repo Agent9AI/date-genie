@@ -13,7 +13,13 @@
  * precise query to fail before trying again cost more than simply asking twice.
  * Both hit the same edge cache, so the redundant one is usually free.
  */
-import { milesBetween, type EventItem, type LatLng, type ParkingSpot, type Restaurant } from "../data";
+import {
+  milesBetween,
+  type EventItem,
+  type LatLng,
+  type ParkingSpot,
+  type Restaurant,
+} from "../data";
 import { ACTIVE_ADAPTERS } from "./registry";
 import type { CandidatePool, EventQuery, RestaurantQuery, SourceReport } from "./types";
 
@@ -40,7 +46,12 @@ function without<T extends object, K extends keyof T>(input: T, ...keys: K[]): O
 function dedupe<T extends { id: string; name: string; at: LatLng }>(items: T[]): T[] {
   const out: T[] = [];
   for (const item of items) {
-    if (!out.some((o) => o.name.toLowerCase() === item.name.toLowerCase() && milesBetween(o.at, item.at) < 0.12)) {
+    if (
+      !out.some(
+        (o) =>
+          o.name.toLowerCase() === item.name.toLowerCase() && milesBetween(o.at, item.at) < 0.12,
+      )
+    ) {
       out.push(item);
     }
   }
@@ -83,9 +94,21 @@ async function round(input: SearchInput): Promise<SearchOutcome> {
         attempt(searchR ? () => searchR({ ...area, ...input.restaurants }) : undefined),
         // The same search without the narrow filters, issued at the same time.
         // Both hit the same edge cache, so asking twice is close to free.
-        narrowed ? attempt(searchR ? () => searchR({ ...area, ...without(input.restaurants, "cuisine", "dietary") }) : undefined) : Promise.resolve([] as Restaurant[]),
+        narrowed
+          ? attempt(
+              searchR
+                ? () => searchR({ ...area, ...without(input.restaurants, "cuisine", "dietary") })
+                : undefined,
+            )
+          : Promise.resolve([] as Restaurant[]),
         attempt(searchE ? () => searchE({ ...area, ...input.events }) : undefined),
-        hasCategory ? attempt(searchE ? () => searchE({ ...area, ...without(input.events, "category") }) : undefined) : Promise.resolve([] as EventItem[]),
+        hasCategory
+          ? attempt(
+              searchE
+                ? () => searchE({ ...area, ...without(input.events, "category") })
+                : undefined,
+            )
+          : Promise.resolve([] as EventItem[]),
         attempt(adapter.searchParking ? () => adapter.searchParking!(area) : undefined),
       ]);
 
@@ -104,12 +127,23 @@ async function round(input: SearchInput): Promise<SearchOutcome> {
         kind: adapter.kind,
         available: true,
         ms: Math.round(performance.now() - started),
-        counts: { restaurants: precise.length + broad.length, events: foundEvents.length, parking: foundParking.length },
+        counts: {
+          restaurants: precise.length + broad.length,
+          events: foundEvents.length,
+          parking: foundParking.length,
+        },
       });
     }),
   );
 
-  return { restaurants: dedupe(restaurants), events: dedupe(events), parking: dedupe(parking), reports, area, dropped };
+  return {
+    restaurants: dedupe(restaurants),
+    events: dedupe(events),
+    parking: dedupe(parking),
+    reports,
+    area,
+    dropped,
+  };
 }
 
 /**
@@ -133,22 +167,42 @@ export async function searchWithWidening(input: SearchInput): Promise<SearchOutc
     needRestaurants
       ? Promise.all(
           adapters.map((a) =>
-            attempt(a.searchRestaurants ? () => a.searchRestaurants!({ ...wide, ...without(input.restaurants, "cuisine", "dietary") }) : undefined),
+            attempt(
+              a.searchRestaurants
+                ? () =>
+                    a.searchRestaurants!({
+                      ...wide,
+                      ...without(input.restaurants, "cuisine", "dietary"),
+                    })
+                : undefined,
+            ),
           ),
         ).then((xs) => xs.flat())
       : Promise.resolve([] as Restaurant[]),
     needEvents
       ? Promise.all(
-          adapters.map((a) => attempt(a.searchEvents ? () => a.searchEvents!({ ...wide, ...without(input.events, "category") }) : undefined)),
+          adapters.map((a) =>
+            attempt(
+              a.searchEvents
+                ? () => a.searchEvents!({ ...wide, ...without(input.events, "category") })
+                : undefined,
+            ),
+          ),
         ).then((xs) => xs.flat())
       : Promise.resolve([] as EventItem[]),
     needRestaurants || needEvents
-      ? Promise.all(adapters.map((a) => attempt(a.searchParking ? () => a.searchParking!(wide) : undefined))).then((xs) => xs.flat())
+      ? Promise.all(
+          adapters.map((a) => attempt(a.searchParking ? () => a.searchParking!(wide) : undefined)),
+        ).then((xs) => xs.flat())
       : Promise.resolve([] as ParkingSpot[]),
   ]);
 
   const dropped = [...first.dropped];
-  if (needRestaurants && moreRestaurants.length > first.restaurants.length && (input.restaurants.cuisine || input.restaurants.dietary?.length)) {
+  if (
+    needRestaurants &&
+    moreRestaurants.length > first.restaurants.length &&
+    (input.restaurants.cuisine || input.restaurants.dietary?.length)
+  ) {
     dropped.push("your food filters, because too little nearby is tagged with them");
   }
   if (needEvents && moreEvents.length > first.events.length && input.events.category) {
@@ -157,7 +211,10 @@ export async function searchWithWidening(input: SearchInput): Promise<SearchOutc
 
   return {
     ...first,
-    restaurants: moreRestaurants.length > first.restaurants.length ? dedupe(moreRestaurants) : first.restaurants,
+    restaurants:
+      moreRestaurants.length > first.restaurants.length
+        ? dedupe(moreRestaurants)
+        : first.restaurants,
     events: moreEvents.length > first.events.length ? dedupe(moreEvents) : first.events,
     parking: moreParking.length > first.parking.length ? dedupe(moreParking) : first.parking,
     area: moreRestaurants.length || moreEvents.length ? wide : first.area,

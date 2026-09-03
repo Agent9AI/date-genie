@@ -8,6 +8,7 @@ import {
   Stage,
   StatusPill,
   ToolConsole,
+  SourcesPanel,
   ToolSurface,
   useGenie,
 } from "@/components/date-genie/panels";
@@ -27,7 +28,8 @@ export const Route = createFileRoute("/")({
       { property: "og:title", content: "Date Genie: date night as a single command" },
       {
         property: "og:description",
-        content: "WebMCP tools that plan and book a whole evening. The agent proposes; the human, in the page, decides.",
+        content:
+          "WebMCP tools that plan and book a whole evening. The agent proposes; the human, in the page, decides.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -43,7 +45,9 @@ function Wordmark() {
         🧞
       </span>
       <div>
-        <h1 className="font-display text-xl leading-none font-extrabold tracking-tight text-foreground">Date Genie</h1>
+        <h1 className="font-display text-xl leading-none font-extrabold tracking-tight text-foreground">
+          Date Genie
+        </h1>
         <p className="mt-1 text-xs text-muted-foreground">Date night as a single command</p>
       </div>
     </div>
@@ -103,13 +107,17 @@ function DateGenie() {
 
       <section className="mb-6">
         <h2 className="max-w-3xl font-display text-3xl leading-[1.1] font-extrabold tracking-tight text-balance text-foreground sm:text-4xl">
-          AI should stop <span className="text-muted-foreground line-through decoration-destructive/60">recommending</span> your
-          life and start <span className="text-primary">executing</span> it.
+          AI should stop{" "}
+          <span className="text-muted-foreground line-through decoration-destructive/60">
+            recommending
+          </span>{" "}
+          your life and start <span className="text-primary">executing</span> it.
         </h2>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Ten links is not an answer. Date Genie exposes a whole evening (dinner, a show, and somewhere to put the car)
-          as WebMCP tools, so your agent hands back <span className="text-foreground">7:30, then 9:15, $164, reserve it?</span>{" "}
-          and you answer with one thumb.
+          Ten links is not an answer. Date Genie exposes a whole evening (dinner, a show, and
+          somewhere to put the car) as WebMCP tools, so your agent hands back{" "}
+          <span className="text-foreground">7:30, then 9:15, $164, reserve it?</span> and you answer
+          with one thumb.
         </p>
       </section>
 
@@ -122,14 +130,15 @@ function DateGenie() {
         />
         {!webmcp.bound && ready ? (
           <p className="mt-2 text-xs text-muted-foreground">
-            No WebMCP host in this browser, so that button runs the page's own scripted agent. It calls the identical
-            tools over the identical code path, including stopping dead at the approval gate.
+            No WebMCP host in this browser, so that button runs the page's own scripted agent. It
+            calls the identical tools over the identical code path, including stopping dead at the
+            approval gate.
           </p>
         ) : null}
         {webmcp.bound && !webmcp.agentSeen && ready ? (
           <p className="mt-2 text-xs text-accent">
-            WebMCP detected on <code className="font-mono">{webmcp.surface}</code>. Ask your agent to plan your evening,
-            or press the button to watch it happen without one.
+            WebMCP detected on <code className="font-mono">{webmcp.surface}</code>. Ask your agent
+            to plan your evening, or press the button to watch it happen without one.
           </p>
         ) : null}
       </div>
@@ -146,8 +155,9 @@ function DateGenie() {
         </div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <ToolSurface />
+        <SourcesPanel />
       </div>
 
       <section className="mt-8">
@@ -159,14 +169,15 @@ function DateGenie() {
 
       <footer className="mt-10 border-t border-border pt-6 text-xs text-muted-foreground">
         <p>
-          Built for the WebMCP Challenge. Restaurants, cinemas, theatres, music venues and parking are fetched live
-          from OpenStreetMap around whatever place you name, anywhere in the world, and every walk and drive time is
-          computed from those real coordinates. Prices, ratings, showtimes and availability are simulated, because no
-          free open dataset carries them. Reservations are simulated; no card is ever charged.
+          Built for the WebMCP Challenge. Restaurants, cinemas, theatres, music venues and parking
+          are fetched live from OpenStreetMap around whatever place you name, anywhere in the world,
+          and every walk and drive time is computed from those real coordinates. Prices, ratings,
+          showtimes and availability are simulated, because no free open dataset carries them.
+          Reservations are simulated; no card is ever charged.
         </p>
         <p className="mt-2">
-          Open <code className="font-mono text-foreground">window.dateGenie.listTools()</code> in the console to inspect
-          the surface yourself, or call any tool directly with{" "}
+          Open <code className="font-mono text-foreground">window.dateGenie.listTools()</code> in
+          the console to inspect the surface yourself, or call any tool directly with{" "}
           <code className="font-mono text-foreground">window.dateGenie.call(name, args)</code>.
           {demoRunning ? <span className="ml-2 text-primary">agent running…</span> : null}
         </p>

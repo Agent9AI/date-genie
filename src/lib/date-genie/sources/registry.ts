@@ -40,7 +40,8 @@ export const WANTED_SOURCES: SourceAdapter[] = [
     attribution: "No public WebMCP surface as of this build",
     provides: ["restaurants"],
     available: false,
-    wantedContract: "Same shape as OpenTable. Notify-me on a full night would compose especially well with a planner.",
+    wantedContract:
+      "Same shape as OpenTable. Notify-me on a full night would compose especially well with a planner.",
   },
   {
     id: "yelp",
@@ -69,7 +70,8 @@ export const WANTED_SOURCES: SourceAdapter[] = [
     attribution: "No public WebMCP surface as of this build",
     provides: ["parking"],
     available: false,
-    wantedContract: "search_parking(near, arriveBy, leaveBy) -> [{id,name,price,walkMinutes}]; reserve_spot(spotId, window).",
+    wantedContract:
+      "search_parking(near, arriveBy, leaveBy) -> [{id,name,price,walkMinutes}]; reserve_spot(spotId, window).",
   },
 ];
 

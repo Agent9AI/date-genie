@@ -2,253 +2,189 @@
 
 **Date night as a single command.** A WebMCP site that stops recommending your evening and starts executing it.
 
-**Live:** https://date-genie.agent9.dev (mirror: https://date-genie.terry-c87.workers.dev)
+**Live:** https://date-genie.agent9.dev · **Mirror:** https://date-genie.terry-c87.workers.dev
 
-Built for [The WebMCP Challenge](https://webmcp.devpost.com/). MIT licensed.
+Built for [The WebMCP Challenge](https://webmcp.devpost.com/). MIT licensed. Contributions genuinely welcome, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ---
 
 ## The problem
 
-Ask any assistant to plan a date night and you get ten links and a shrug. The
-work you actually wanted done, holding a table, holding two tickets, and finding
-somewhere to leave the car, all of it timed so you are not sprinting between
-them, is still yours to do across six tabs.
+Ask any assistant to plan a date night and you get ten links and a shrug. The work you actually wanted done, holding a table, holding two tickets, and finding somewhere to leave the car, timed so you are not sprinting between them, is still yours to do across six tabs.
 
-The reason is not that the model is stupid. It is that a restaurant page, a
-ticketing page and a parking page have nothing to say to a machine except HTML.
+The reason is not that the model is stupid. It is that a restaurant page, a ticketing page and a parking page have nothing to say to a machine except HTML.
 
-## What this does
+## What it does
 
-Say it once:
+Say it once, in your own words, naming anywhere on earth:
 
-> "Plan something fun for me and my girlfriend Friday night. Keep everything
-> under $180. We're in Arlington, don't make us drive more than 20 minutes, and
-> nothing before 7."
+> "Plan something fun for me and my girlfriend Friday night in Asheville, NC. Keep everything under $180, don't make us drive more than 20 minutes, and nothing before 7."
 
-and get back one evening, not ten options:
+Get back one evening, not ten options:
 
 ```
-7:24 PM   Park at Ballston Quarter Garage      $10
-7:30 PM   Masa & Luz, Mexican, 4.5 stars       $68
-9:00 PM   35mm Late Show: Chungking Express    $36
-                                        Total  $114 of your $180
+7:24 PM   Park at Rankin Avenue Garage       $10
+7:30 PM   Tupelo Honey, Southern             $68
+9:00 PM   Live set at The Orange Peel        $36
+                                      Total  $114 of your $180
 ```
 
-Then one button books all three at once and drops them in your calendar.
+Then one button books all three at once, and the tool call that does it **cannot run** until your thumb hits Confirm.
+
+## Three layers
+
+**1. Search.** Adapters, queried at the moment you ask, with your filters compiled into the upstream query. Asking for vegan food issues a `diet:vegan` search rather than downloading a city and discarding most of it. There is no stored inventory anywhere in this repo: no seed dataset, no cached city, no home town. `data.ts` contains types and geometry and nothing else.
+
+**2. Understanding and ranking.** Cloudflare Workers AI (Llama 3.3 70B, no API key, running on the same Worker that serves the page) turns your sentence into constraints. Then a deterministic solver does exhaustive constraint satisfaction over every dinner × event × parking combination, typically three to seven thousand of them.
+
+The split is deliberate: **the model handles language, the solver handles money and time.** The model never picks a venue and never computes a total, and any number it returns is discarded unless those digits actually appear in what you typed. A planner that cannot be talked out of your price ceiling is worth more than a cleverer one that can.
+
+**3. Execution.** WebMCP tools, with a human approval gate that no agent can satisfy on your behalf.
 
 ## Why this has to be WebMCP and not a server-side MCP
 
-A server MCP could search restaurants. It could not do any of the following,
-and these are the whole point of the project.
+A server MCP could search restaurants. It could not do any of the following.
 
-### 1. The agent reads the page, not your mind
+### The agent reads the page, not your mind
 
-Every dial on the left of the screen is live state that `get_date_context`
-returns before the agent asks you a single question. You already said your
-budget with your thumb. Being asked again is the thing that makes assistants
-exhausting.
+Every dial on screen is live state that `get_date_context` returns before the agent asks a single question. You already said your budget with your thumb. Being asked again is what makes assistants exhausting.
 
-### 2. The agent writes the page, and you watch it happen
+### The agent writes the page, and you watch it happen
 
-`plan_date_night` does not return an itinerary for the agent to read out. It
-renders the itinerary onto the screen you are looking at, animated, and the
-agent's reply describes what you can already see. One shared surface, two
-participants.
+`plan_date_night` does not return an itinerary for the agent to read aloud. It renders it onto the screen you are looking at, and the agent's reply describes what you can already see. One shared surface, two participants.
 
-### 3. Your thumb is the only thing that can spend your money
+### Your thumb is the only thing that can spend your money
 
-`request_approval` **suspends the tool call** until a human presses a button in
-the page. No timeout. No default. An unanswered request never resolves, which
-is the correct behaviour for a tool that holds a table.
+`request_approval` **suspends the tool call** until you press a button in the page. No timeout. No default. An unanswered request never resolves, which is the correct behaviour for a tool that holds a table. On approval it returns a single-use token, voided the moment the plan changes, so an agent can never get approval for a $114 evening and book a $400 one.
 
-On approval it returns a single-use token. `book_approved_plan` refuses without
-it, and the token is voided the moment the plan changes, so an agent can never
-get approval for a $114 evening and book a $400 one.
+### The toolbox reshapes with the app
 
-### 4. The toolbox reshapes with the app
+`book_approved_plan` is **not registered** until an approval is live. It is not guarded, it does not exist. `get_booking` only appears after something is booked. Prove it in ten seconds:
 
-`book_approved_plan` is **not registered** until an approval is live. It is not
-guarded, it does not exist. `get_booking` only appears after something is
-booked. The agent's available tools are a live reflection of what is genuinely
-possible right now.
+```js
+window.dateGenie.listTools().map((t) => t.name);
+await window.dateGenie.call("book_approved_plan", { approvalToken: "forged" });
+// TypeError: No such tool: book_approved_plan
+```
 
-You can prove this in the console in ten seconds. See "Verify the claims" below.
-
-### 5. Preferences persist in the page
-
-`remember_preference("oysters")` writes a standing veto that survives reload,
-appears as a chip you can remove, and is honoured by every future plan.
+That is the security model. Not a check that returns false. The capability is absent.
 
 ## The tool surface
 
-Fourteen tools. Twelve always registered, two conditional.
+Sixteen tools. Fourteen always registered, two conditional on page state.
 
-| Tool | Kind | What it does |
-| --- | --- | --- |
-| `get_date_context` | read | Live UI state: budget, times, party, vetoes, whether a plan is on screen |
-| `find_restaurants` | read | Price, cuisine, drive time, dietary, noise. Returns real open slots |
-| `search_events` | read | Comedy, music, film, theater, workshops with start times and seats left |
-| `check_availability` | read | Open tables at one restaurant, plus how long a meal there takes |
-| `find_parking` | read | Lots near a venue, priced for the evening, walk time from coordinates |
-| `plan_date_night` | write | The main tool. Natural language in, one bookable evening out |
-| `refine_plan` | write | cheaper, later, earlier, quieter, shorter_walk, swap_dinner, swap_event, fancier |
-| `set_constraint` | write | Set a hard number and re-plan |
-| `remember_preference` | write | Save a standing dislike, permanently |
-| `pick_alternate` | write | Promote an alternate to the main plan |
-| `explain_plan` | read | The constraint receipt: target vs actual for every rule you set |
-| `request_approval` | gate | Suspends until a human confirms in the page. Returns a single-use token |
-| `book_approved_plan` | **conditional** | Only exists while an approval is live. Books all three at once |
-| `get_booking` | **conditional** | Only exists after booking |
+| Tool                  | Kind            | What it does                                                                     |
+| --------------------- | --------------- | -------------------------------------------------------------------------------- |
+| `get_date_context`    | read            | Live UI state: place, budget, times, party, vetoes, whether a plan is on screen  |
+| `list_sources`        | read            | Which providers are live, and the tool contract the missing ones would need      |
+| `set_location`        | write           | Geocode anywhere on earth, then search it                                        |
+| `find_restaurants`    | read            | Filters compiled into the upstream query                                         |
+| `search_events`       | read            | Real cinemas, theatres, music venues, arts centres                               |
+| `find_parking`        | read            | Real lots, walk times computed from coordinates                                  |
+| `check_availability`  | read            | Open tables and how long a meal there takes                                      |
+| `plan_date_night`     | write           | The main tool. One sentence in, one bookable evening out                         |
+| `refine_plan`         | write           | cheaper, later, earlier, quieter, shorter_walk, swap_dinner, swap_event, fancier |
+| `set_constraint`      | write           | Set a hard number and re-plan                                                    |
+| `remember_preference` | write           | Save a standing dislike, permanently                                             |
+| `pick_alternate`      | write           | Promote an alternate                                                             |
+| `explain_plan`        | read            | Target vs actual for every rule you set                                          |
+| `request_approval`    | gate            | Suspends until a human confirms. Returns a single-use token                      |
+| `book_approved_plan`  | **conditional** | Only exists while an approval is live                                            |
+| `get_booking`         | **conditional** | Only exists after booking                                                        |
 
-Tool responses are written as prose for a model to read, with the machine
-payload alongside in `structuredContent`. Errors are instructions: a failed call
-tells the agent what to try next rather than just saying no.
-
-## Verify the claims
-
-Open the live site and paste these into the browser console.
-
-```js
-// The full registered surface, straight from the page
-window.dateGenie.listTools().map(t => t.name)
-
-// The agent reading your on-page state
-(await window.dateGenie.call('get_date_context', {})).content[0].text
-
-// Plan an evening the way an agent would
-(await window.dateGenie.call('plan_date_night', {
-  request: "under $150, vegetarian, nothing before 7:30, home by 11"
-})).content[0].text
-
-// Now try to book it without asking the human.
-// This throws: the tool does not exist yet.
-await window.dateGenie.call('book_approved_plan', { approvalToken: 'forged' })
-```
-
-That last line is the security model. Not a check that returns false. The
-capability is absent.
-
-The automated version of exactly this lives in `tests/e2e.mjs` and runs against
-production with `npm run e2e`.
+Tool text is written for a model to read, with the machine payload alongside in `structuredContent`. Errors are instructions: a failed call tells the agent what to try next.
 
 ## Data: what is real and what is not
 
-This matters, so it is stated plainly rather than buried.
+Stated plainly rather than buried, because it is the first thing a careful person asks.
 
-**Real, fetched live from the [OpenStreetMap Overpass API](https://overpass-api.de/)
-on every page load** (no API key, no cost):
+**Real, fetched live from [OpenStreetMap](https://www.openstreetmap.org/) via Overpass and Nominatim, no API key, free:**
 
-- ~140 actual Arlington, Virginia restaurants: names, coordinates, cuisine tags,
-  and `diet:vegan` / `diet:vegetarian` tags
-- ~20 actual parking facilities: names, coordinates, whether they charge a fee,
-  whether they are covered
-- **Every walk and drive time in the app is computed from those real
-  coordinates** with a haversine distance and a city walking pace. Nothing is a
-  hardcoded pair, so the planner reasons about combinations nobody enumerated.
+- Restaurants, cinemas, theatres, nightclubs, arts centres and parking facilities around any place you name, anywhere in the world
+- Their names, coordinates, cuisine tags, `diet:vegan` and `diet:vegetarian` tags, brand (so chains can be spotted), and whether a lot charges a fee or is covered
+- **Every walk and drive time is computed from those real coordinates** by haversine at a city walking pace. Nothing is a hardcoded pair, so the planner reasons about combinations nobody enumerated
 
 **Simulated, because no free open dataset carries it:**
 
-- Prices, ratings and table availability. These are derived deterministically
-  from each venue's OSM id, so a restaurant looks identical on every reload
-  instead of shuffling between visits.
-- The events list is curated rather than fetched. Every keyless events API worth
-  using needs a key.
-- Reservations. Confirmation codes are generated locally. No card is charged and
-  no restaurant is contacted.
+- Prices, ratings, table availability, showtimes and seats. Derived deterministically from each venue's OSM id, so a restaurant looks identical on every reload rather than shuffling between visits
+- Reservations. Confirmation codes are generated locally. No card is charged and no restaurant is contacted
 
-If Overpass is slow or unreachable, the app falls back to a curated seed
-inventory and **says so** in the status badge and in `get_date_context`, so an
-agent is never misled about how fresh its data is.
+The simulated star rating is deliberately given a **small weight** in ranking. Letting fabricated stars outvote what the human actually said is how you end up recommending a $102 evening to someone who set aside $300 for their anniversary.
 
-Swapping the inventory for OpenTable, Ticketmaster and SpotHero would not change
-a single tool contract or a line of the planner.
+## What it does when it cannot help
 
-## How the planner works
+Most planners answer "no results" and leave you guessing which of your six constraints was the problem. This one:
 
-`planDateNight` runs exhaustive constraint satisfaction over the full
-dinner-slot x event x parking product space, roughly 3,500 candidate evenings
-against live OSM data.
-
-Hard constraints eliminate: budget ceiling, earliest start, latest end, drive
-radius, walk radius between stops, dietary requirements, standing vetoes, seats
-remaining, and pacing (enough time to finish dinner, and no dead hour afterwards).
-
-Survivors are scored on rating, interest match, budget headroom, pacing quality
-and walk distance. The winner ships with a plain-language reason and a
-constraint receipt showing target versus actual for every rule, so "are you sure
-this is under budget" is answered with evidence rather than reassurance.
-
-## WebMCP compatibility
-
-WebMCP is a moving target. The same capability lives in different places
-depending on the browser build:
-
-| Surface | Where |
-| --- | --- |
-| `navigator.modelContext` | Chrome 149 origin trial, deprecated in 150 |
-| `document.modelContext` | Current spec, tools belong to a document |
-| `window.modelContext` | Polyfills and extension shims |
-| `navigator.modelContextTesting` | Chrome's testing surface |
-
-and registration is either per-tool (`registerTool`) or batched
-(`provideContext({ tools })`).
-
-`src/lib/date-genie/webmcp.ts` does not pick a winner. It probes every known
-surface, binds to the first that works, registers through whichever calling
-convention exists, supports `client.requestUserInteraction` when the host
-provides it, and keeps the registered set in sync with page state. It is about
-180 lines and has no dependency on the rest of this app. Lift it.
+- **Widens the one constraint that actually blocked**, then says so in the UI and to the agent. Not an exact match is different from no match, and the difference belongs on screen
+- **Prices the shortfall.** If money is the binding constraint, it computes the cheapest evening that satisfies everything else and shows the breakdown: dinner, tickets, parking. "Two film tickets in DC plus dinner is $95, your ceiling is $50" is something a person can act on
+- **Treats filters as preferences, not walls.** Precise and broad searches run in parallel, results merge, and the scorer prefers the match. You get korean food when korean food is affordable, and an honest note when it is not
 
 ## Running it without a WebMCP browser
 
-Most people opening this link have no agent in their browser. Rather than show
-them a dead page and a version requirement, the site ships its own small agent
-that drives the identical tools over the identical instrumented code path.
+Most people opening this link have no agent in their browser. Rather than a dead page and a version requirement, the site ships its own small agent driving the identical tools over the identical instrumented path.
 
-It is **scripted, not a language model**. No API key, no network, no hidden LLM.
-What you watch it do is exactly what a real WebMCP client does, including
-stopping dead at the approval gate and being unable to continue until a human
-presses a button.
+It is **scripted, not a language model**. No API key, no hidden LLM. What you watch it do is exactly what a real WebMCP client does, including stopping dead at the approval gate.
+
+## WebMCP compatibility
+
+The API is a moving target, so `src/lib/date-genie/webmcp.ts` does not pick a winner:
+
+| Surface                         | Where                                      |
+| ------------------------------- | ------------------------------------------ |
+| `navigator.modelContext`        | Chrome 149 origin trial, deprecated in 150 |
+| `document.modelContext`         | Current spec, tools belong to a document   |
+| `window.modelContext`           | Polyfills and extension shims              |
+| `navigator.modelContextTesting` | Chrome's testing surface                   |
+
+It probes every one, binds to the first that works, registers through `registerTool` or `provideContext` depending on what exists, honours `client.requestUserInteraction` when the host provides it, and keeps the registered set in sync with page state. About 180 lines, no dependency on the rest of the app. Lift it.
+
+## Architecture
+
+```
+src/lib/date-genie/
+  data.ts            types and geometry. No data, by design
+  engine.ts          constraint satisfaction, scoring, relaxation, diagnosis
+  understand.ts      Workers AI layer with a validated rules floor
+  store.ts           the shared table: one state both human and agent mutate
+  tools.ts           the sixteen WebMCP tools
+  webmcp.ts          compatibility and registration layer
+  demo-agent.ts      the built-in scripted agent
+  ics.ts             calendar export
+  sources/
+    types.ts         the adapter contract
+    registry.ts      live adapters, and the ones that have not shipped WebMCP
+    osm.ts           OpenStreetMap adapter
+    search.ts        parallel fan-out, dedupe, targeted widening
+    geocode.ts       place names and browser geolocation
+src/api.ts           Worker-side adapter endpoints and edge caching
+src/components/date-genie/panels.tsx
+src/routes/index.tsx
+tests/               Playwright suites that run against production
+```
+
+Stack: TanStack Start, React 19, Tailwind 4, deployed as a Cloudflare Worker with Workers AI.
 
 ## Local development
 
 ```sh
 npm install
 npm run dev          # http://localhost:3000
-npm run build        # production build
+npm run build
 npm run deploy       # build, stamp the worker config, deploy to Cloudflare
-npm run e2e          # Playwright run against production
+npm run e2e          # full approval-and-booking flow against production
+node tests/scenarios.mjs   # four real cities, with timings
 npm run lint
 ```
 
-## Architecture
-
-```
-src/lib/date-genie/
-  data.ts          world model, seed inventory, haversine geo, mutable registry
-  live-venues.ts   OpenStreetMap Overpass fetch, normalisation, caching
-  engine.ts        constraint satisfaction, scoring, refinement, reservations
-  store.ts         the shared table: one state both human and agent mutate
-  tools.ts         the fourteen WebMCP tools
-  webmcp.ts        the compatibility and registration layer
-  demo-agent.ts    the built-in scripted agent
-  ics.ts           calendar export
-src/components/date-genie/panels.tsx    every panel, human control and agent surface
-src/routes/index.tsx                     the page
-tests/e2e.mjs                            end-to-end proof, runs against production
-```
-
-Stack: TanStack Start, React 19, Tailwind 4, deployed as a Cloudflare Worker.
+Workers AI and the adapter endpoints only exist in the deployed Worker, so `npm run dev` falls back to the rules parser. That path is supported and tested, not an afterthought.
 
 ## Limitations, honestly
 
-- Arlington, Virginia only. The bounding box is one constant in `live-venues.ts`.
-- Events are curated, not live.
-- Prices, ratings and availability are simulated. See the data section.
-- Bookings are simulated end to end.
-- Only one person's agent participates. Two partners negotiating a shared plan
-  through two agents is the obvious next thing and is not built.
+- Events are real venues with **simulated showtimes**. A keyed Ticketmaster adapter is written and waiting for a key
+- Prices and ratings are simulated. A keyed Yelp or Foursquare adapter is written and waiting for a key
+- Bookings are simulated end to end
+- Only one person's agent participates. Two partners negotiating one plan through two agents is the obvious next thing and is not built
+- OpenStreetMap tagging quality varies. In some towns `amenity=restaurant` includes a popcorn shop
 
 ## License
 

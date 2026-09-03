@@ -14,9 +14,13 @@ export async function geocode(query: string, timeoutMs = 12000): Promise<Place |
   const q = query.trim();
   if (!q) return null;
   try {
-    const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!res.ok) return null;
-    const body = (await res.json()) as { results?: { lat: string; lon: string; display_name: string }[] };
+    const body = (await res.json()) as {
+      results?: { lat: string; lon: string; display_name: string }[];
+    };
     const hit = body.results?.[0];
     if (!hit) return null;
     // Display names run to six clauses. Two is enough to recognise a place.

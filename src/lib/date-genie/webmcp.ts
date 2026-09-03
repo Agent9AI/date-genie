@@ -46,7 +46,8 @@ function probeSurfaces(): Surface[] {
   const push = (name: string, candidate: unknown) => {
     if (!candidate || typeof candidate !== "object") return;
     const mc = candidate as ModelContextLike;
-    if (typeof mc.registerTool === "function" || typeof mc.provideContext === "function") found.push({ name, mc });
+    if (typeof mc.registerTool === "function" || typeof mc.provideContext === "function")
+      found.push({ name, mc });
   };
   push("document.modelContext", doc["modelContext"]);
   push("navigator.modelContext", nav["modelContext"]);
@@ -130,7 +131,8 @@ function registerAll(tools: DateGenieTool[]) {
       registered.set(d.name, true);
     } catch (err) {
       // InvalidStateError means a same-named tool is already there. Fine.
-      if (!(err instanceof Error) || !/already/i.test(err.message)) console.warn("[date-genie] registerTool failed", d.name, err);
+      if (!(err instanceof Error) || !/already/i.test(err.message))
+        console.warn("[date-genie] registerTool failed", d.name, err);
       registered.set(d.name, true);
     }
   }
@@ -153,7 +155,9 @@ export function bindWebMcp(): BindResult {
     const names = tools.map((t) => t.name);
     const prev = store.getState().webmcp;
     if (prev.tools.join("|") !== names.join("|") || prev.bound !== !!bound) {
-      store.set({ webmcp: { ...prev, bound: !!bound, surface: bound?.name ?? "none", tools: names } });
+      store.set({
+        webmcp: { ...prev, bound: !!bound, surface: bound?.name ?? "none", tools: names },
+      });
     }
   };
 
@@ -177,8 +181,18 @@ export function bindWebMcp(): BindResult {
   const local = Object.fromEntries(allTools().map((t) => [t.name, instrument(t, "demo")]));
   (window as unknown as Record<string, unknown>)["dateGenie"] = {
     ...local,
-    listTools: () => allTools().map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
-    call: async (name: string, input: Record<string, unknown> = {}, caller: store.ToolCall["caller"] = "demo") => {
+    listTools: () =>
+      allTools().map(({ name, description, inputSchema, annotations }) => ({
+        name,
+        description,
+        inputSchema,
+        annotations,
+      })),
+    call: async (
+      name: string,
+      input: Record<string, unknown> = {},
+      caller: store.ToolCall["caller"] = "demo",
+    ) => {
       const tool = allTools().find((t) => t.name === name);
       if (!tool) throw new Error(`No such tool: ${name}`);
       return instrument(tool, caller)(input);
@@ -193,7 +207,13 @@ export function bindWebMcp(): BindResult {
     dispose: () => {
       unsubscribe?.();
       unsubscribe = null;
-      if (bound?.mc.unregisterTool) for (const name of registered.keys()) try { bound.mc.unregisterTool(name); } catch { /* ignore */ }
+      if (bound?.mc.unregisterTool)
+        for (const name of registered.keys())
+          try {
+            bound.mc.unregisterTool(name);
+          } catch {
+            /* ignore */
+          }
       registered.clear();
       delete (window as unknown as Record<string, unknown>)["dateGenie"];
       bound = null;
@@ -202,7 +222,11 @@ export function bindWebMcp(): BindResult {
 }
 
 /** Call a tool through the same instrumented path the agent uses. */
-export async function callTool(name: string, input: Record<string, unknown> = {}, caller: store.ToolCall["caller"] = "demo"): Promise<ToolResult> {
+export async function callTool(
+  name: string,
+  input: Record<string, unknown> = {},
+  caller: store.ToolCall["caller"] = "demo",
+): Promise<ToolResult> {
   const tool = allTools().find((t) => t.name === name);
   if (!tool) throw new Error(`No such tool: ${name}`);
   return instrument(tool, caller)(input);

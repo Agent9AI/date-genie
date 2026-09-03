@@ -15,7 +15,10 @@ function stamp(hhmm: string, dayOffset = 0): string {
 const esc = (s: string) => s.replace(/([,;\\])/g, "\\$1").replace(/\n/g, "\\n");
 
 export function planToIcs(plan: Plan, booking: Booking | null): string {
-  const now = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const now = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}/, "");
   const events = plan.legs
     .filter((l) => l.kind !== "parking")
     .map((leg, i) => {
@@ -29,7 +32,12 @@ export function planToIcs(plan: Plan, booking: Booking | null): string {
         `SUMMARY:${esc(`${leg.glyph} ${leg.title}`)}`,
         `LOCATION:${esc(leg.neighborhood + ", Arlington, VA")}`,
         `DESCRIPTION:${esc(
-          [leg.subtitle, leg.detail, line ? `Confirmation ${line.confirmation}` : "", `Planned by Date Genie`]
+          [
+            leg.subtitle,
+            leg.detail,
+            line ? `Confirmation ${line.confirmation}` : "",
+            `Planned by Date Genie`,
+          ]
             .filter(Boolean)
             .join("\n"),
         )}`,
@@ -53,7 +61,14 @@ export function planToIcs(plan: Plan, booking: Booking | null): string {
     );
   }
 
-  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Date Genie//WebMCP//EN", "CALSCALE:GREGORIAN", ...events, "END:VCALENDAR"].join("\r\n");
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Date Genie//WebMCP//EN",
+    "CALSCALE:GREGORIAN",
+    ...events,
+    "END:VCALENDAR",
+  ].join("\r\n");
 }
 
 export function downloadIcs(plan: Plan, booking: Booking | null) {
