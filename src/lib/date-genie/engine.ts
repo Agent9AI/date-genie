@@ -755,8 +755,12 @@ export function parseRequest(text: string, base: Constraints = DEFAULT_CONSTRAIN
   }
   if (/\b(quiet|somewhere quiet|not too loud|low.key|lowkey|conversation)\b/.test(t)) c.noisePreference = "quiet";
 
-  c.interests = [...new Set(c.interests)];
   c.avoid = [...new Set(c.avoid)];
   c.dietary = [...new Set(c.dietary)];
+  // "absolutely no oysters" matches the oyster cuisine keyword too. Anything the
+  // human ruled out can never also be something they asked for.
+  c.interests = [...new Set(c.interests)].filter(
+    (i) => !c.avoid.some((a) => a.includes(i) || i.includes(a)),
+  );
   return c;
 }

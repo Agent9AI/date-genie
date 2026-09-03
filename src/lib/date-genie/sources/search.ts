@@ -18,6 +18,13 @@ export type SearchInput = {
   events: Omit<EventQuery, "at" | "radiusKm">;
 };
 
+/** exactOptionalPropertyTypes means dropping a filter is a delete, not an undefined. */
+function without<T extends object, K extends keyof T>(input: T, ...keys: K[]): Omit<T, K> {
+  const copy = { ...input };
+  for (const k of keys) delete copy[k];
+  return copy;
+}
+
 /** Same venue from two providers should appear once. */
 function dedupe<T extends { id: string; name: string; at: LatLng }>(items: T[]): T[] {
   const out: T[] = [];
@@ -84,14 +91,57 @@ export async function searchCandidates(input: SearchInput): Promise<CandidatePoo
   };
 }
 
+export type SearchOutcome = CandidatePool & {
+  /** Filters that had to be dropped upstream, and why. Shown to the human. */
+  dropped: string[];
+};
+
+const enough = (p: CandidatePool) => p.restaurants.length >= 6;
+
 /**
- * Search, and widen once if the area came back too thin to build an evening in.
- * A small town is not an error, it just needs a bigger box.
+ * Search, then relax, in the order that loses the least.
+ *
+ * The upstream filters are genuinely useful when they hit, and genuinely fatal
+ * when they miss: OpenStreetMap's `diet:vegetarian` tagging is excellent in some
+ * towns and absent in others, and a cuisine filter can empty a small town on its
+ * own. So try the precise query first, then widen the box, then drop the
+ * narrowest filter, and say out loud which filter went.
  */
-export async function searchWithWidening(input: SearchInput): Promise<CandidatePool> {
-  const first = await searchCandidates(input);
-  const thin = first.restaurants.length < 8 || first.events.length < 3;
-  if (!thin) return first;
+export async function searchWithWidening(input: SearchInput): Promise<SearchOutcome> {
+  const dropped: string[] = [];
+
+  const precise = await searchCandidates(input);
+  if (enough(precise) && precise.events.length >= 3) return { ...precise, dropped };
+
   const wider = await searchCandidates({ ...input, radiusKm: input.radiusKm * 2.5 });
-  return wider.restaurants.length + wider.events.length > first.restaurants.length + first.events.length ? wider : first;
+  const best = wider.restaurants.length > precise.restaurants.length ? wider : precise;
+  if (enough(best) && best.events.length >= 3) return { ...best, dropped };
+
+  if (input.restaurants.cuisine) {
+    const noCuisine = await searchCandidates({
+      ...input,
+      radiusKm: input.radiusKm * 2.5,
+      restaurants: without(input.restaurants, "cuisine"),
+    });
+    if (noCuisine.restaurants.length > best.restaurants.length) {
+      dropped.push(`the "${input.restaurants.cuisine}" filter, because too little nearby is tagged with it`);
+      if (enough(noCuisine)) return { ...noCuisine, dropped };
+    }
+  }
+
+  if (input.restaurants.dietary?.length) {
+    const noDiet = await searchCandidates({
+      ...input,
+      radiusKm: input.radiusKm * 2.5,
+      restaurants: without(input.restaurants, "cuisine", "dietary"),
+    });
+    if (noDiet.restaurants.length > best.restaurants.length) {
+      dropped.push(
+        `the ${input.restaurants.dietary.join(" and ")} filter, because OpenStreetMap has little diet tagging here. Check the menu before you go`,
+      );
+      return { ...noDiet, dropped };
+    }
+  }
+
+  return { ...best, dropped };
 }

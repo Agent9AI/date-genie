@@ -24,7 +24,6 @@ import {
   findParkingNear,
   fmtTime,
   money,
-  parseRequest,
   extractLocation,
   refineConstraints,
   type Constraints,
@@ -34,6 +33,7 @@ import {
 import { driveMinutes } from "./data";
 import { osmAdapter } from "./sources/osm";
 import { ACTIVE_ADAPTERS, WANTED_SOURCES } from "./sources/registry";
+import { understandRequest } from "./understand";
 import * as store from "./store";
 
 /* ------------------------------------------------------------- types ---- */
@@ -317,8 +317,12 @@ export function buildTools(): DateGenieTool[] {
         if (!request) return fail("Pass the human's request as `request`. Their exact words are better than your summary.");
         store.set({ utterance: request });
 
+        // Language understanding first: Workers AI at the edge if it is
+        // available, the rules parser underneath it either way.
+        const understood = await understandRequest(request, { ...store.getState().constraints, avoid: store.getState().vetoes });
+
         let moved = "";
-        const named = extractLocation(request);
+        const named = understood.location ?? extractLocation(request);
         const current = store.getState().place;
         if (named && (!current || !current.label.toLowerCase().startsWith(named.split(",")[0]!.toLowerCase()))) {
           const res = await store.setPlace(named);
@@ -327,7 +331,8 @@ export function buildTools(): DateGenieTool[] {
           return fail(`${NO_PLACE} The request did not name anywhere either.`);
         }
 
-        const parsed = parseRequest(request, { ...store.getState().constraints, avoid: store.getState().vetoes });
+        const parsed = understood.constraints;
+        store.set({ understanding: understood });
         await store.search(parsed);
 
         const s = store.getState();
@@ -342,7 +347,15 @@ export function buildTools(): DateGenieTool[] {
         const alt = s.alternates.map((p, i) => `Alternate ${i + 1}: ${p.dinner.restaurant.name} + ${p.event.event.venue}, ${money(p.total)}`);
         return ok(
           `${moved}${widened}Booked-shaped and on screen now. The human can see this.\n\n${planSummary(s.plan)}\n\nWhy: ${s.plan.why.join("; ")}.\nSearched ${s.pool?.restaurants.length ?? 0} restaurants and ${s.pool?.events.length ?? 0} venues, then checked ${s.considered} combinations.\n${alt.length ? "\n" + alt.join("\n") : ""}\n\nNext: call request_approval to ask the human to confirm. Do NOT book without it.`,
-          { plan: planPayload(s.plan), alternates: s.alternates.map(planPayload), checks: s.checks, constraints: s.constraints, considered: s.considered, sources: s.pool?.reports ?? [] },
+          {
+            plan: planPayload(s.plan),
+            alternates: s.alternates.map(planPayload),
+            checks: s.checks,
+            constraints: s.constraints,
+            considered: s.considered,
+            sources: s.pool?.reports ?? [],
+            understanding: { via: understood.via, model: understood.model ?? null, occasion: understood.occasion },
+          },
         );
       },
     },

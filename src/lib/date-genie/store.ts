@@ -25,6 +25,7 @@ import {
 import { setHome } from "./data";
 import { geocode, locateMe, reverseGeocode, type Place } from "./sources/geocode";
 import { searchWithWidening } from "./sources/search";
+import type { Understanding } from "./understand";
 import type { CandidatePool } from "./sources/types";
 
 export type ToolCall = {
@@ -47,6 +48,8 @@ export type ApprovalState =
 export type State = {
   constraints: Constraints;
   utterance: string;
+  /** How the last request was parsed, and by what. */
+  understanding: Understanding | null;
   /** Where we are searching. Null until the human says, or geolocation answers. */
   place: Place | null;
   /** Results of the most recent search. Never persisted, never reused across places. */
@@ -94,6 +97,7 @@ function saveVetoes(v: string[]) {
 let state: State = {
   constraints: { ...DEFAULT_CONSTRAINTS },
   utterance: "",
+  understanding: null,
   place: null,
   pool: null,
   plan: null,
@@ -222,6 +226,10 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
     },
     events: { earliest: merged.earliest, latestEnd: merged.latestEnd },
   });
+
+  if (pool.dropped.length) {
+    set({ notice: `To find anything at all I had to drop ${pool.dropped.join("; and ")}.` });
+  }
 
   if (!pool.restaurants.length) {
     set({
