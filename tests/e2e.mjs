@@ -29,8 +29,8 @@ const ctx = await page.evaluate(
 console.log("--- get_date_context ---\n" + ctx);
 
 // 3. Run the whole flow via the button
-await page.getByRole("button", { name: /grant the wish/i }).click();
-await page.waitForFunction(() => window.dateGenie.getState().plan !== null, { timeout: 90000 });
+await page.getByRole("button", { name: /^plan it$/i }).click();
+await page.waitForFunction(() => window.dateGenie.getState().plan !== null, null, { timeout: 120000 });
 await page.waitForTimeout(600);
 await page.screenshot({ path: `${shots}/02-planned.png` });
 

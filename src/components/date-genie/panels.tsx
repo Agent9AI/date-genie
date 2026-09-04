@@ -1,20 +1,23 @@
 /**
- * The shared surface, rendered.
+ * The shared surface, rendered as a running order.
  *
- * Every panel here is BOTH a human control and an agent-visible surface:
- * what you drag, the agent reads through `get_date_context`; what the agent
- * changes, you watch move. There is no hidden second copy of the state.
+ * Every panel here is BOTH a human control and an agent-visible surface: what
+ * you drag, the agent reads through `get_date_context`; what the agent changes,
+ * you watch move. There is no hidden second copy of the state.
+ *
+ * The visual idea is the itinerary a good concierge hands you, not a dashboard.
+ * The evening is the only loud thing on the page. The console is present and
+ * legible and never competes with it.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { downloadIcs } from "@/lib/date-genie/ics";
+import { buildHandoff } from "@/lib/date-genie/handoff";
 import { fmtTime, money, toMinutes, type Plan } from "@/lib/date-genie/engine";
 import * as store from "@/lib/date-genie/store";
 import { callTool } from "@/lib/date-genie/webmcp";
 import { allTools } from "@/lib/date-genie/tools";
 import { ACTIVE_ADAPTERS, WANTED_SOURCES } from "@/lib/date-genie/sources/registry";
-
-/* --------------------------------------------------------------- hook ---- */
 
 const serverSnapshot = store.getState();
 
@@ -22,34 +25,42 @@ export function useGenie(): store.State {
   return useSyncExternalStore(store.subscribe, store.getState, () => serverSnapshot);
 }
 
-/* ------------------------------------------------------------- pieces ---- */
+/* ------------------------------------------------------------- shell ---- */
 
 function Panel({
   title,
   hint,
   right,
   children,
+  quiet = false,
   className = "",
 }: {
-  title: string;
+  title?: string;
   hint?: string;
   right?: React.ReactNode;
   children: React.ReactNode;
+  quiet?: boolean;
   className?: string;
 }) {
   return (
-    <section className={`surface p-4 sm:p-5 ${className}`}>
-      <header className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="font-display text-sm font-semibold tracking-wide text-foreground uppercase">
-            {title}
-          </h2>
-          {hint ? (
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{hint}</p>
-          ) : null}
-        </div>
-        {right}
-      </header>
+    <section className={`surface p-5 ${quiet ? "opacity-95" : ""} ${className}`}>
+      {title ? (
+        <header className="mb-4 flex items-baseline justify-between gap-3">
+          <div>
+            <h2
+              className={`font-display ${quiet ? "text-lg" : "text-xl"} leading-none text-foreground`}
+            >
+              {title}
+            </h2>
+            {hint ? (
+              <p className="mt-2 max-w-prose text-xs leading-relaxed text-muted-foreground">
+                {hint}
+              </p>
+            ) : null}
+          </div>
+          {right}
+        </header>
+      ) : null}
       {children}
     </section>
   );
@@ -57,27 +68,25 @@ function Panel({
 
 export function StatusPill() {
   const { webmcp, pool, searching } = useGenie();
-  const live = webmcp.bound;
-  const found = pool ? pool.restaurants.length : 0;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span
-        className={`rule-chip ${pool ? "border-accent/50 text-accent" : ""}`}
+        className="rule-chip"
         title={
           pool
-            ? `Live results from ${pool.reports.map((r) => `${r.label} (${r.ms}ms)`).join(", ")}. Names, locations, cuisines and diet tags are real. Prices, ratings, showtimes and availability are simulated.`
-            : "No search has run yet. Nothing about any place is stored in this page."
+            ? `Live results from ${pool.reports.map((r) => r.label).join(", ")}`
+            : "Nothing about any place is stored in this page"
         }
       >
         {searching ? (
           <>
-            <span className="size-1.5 rounded-full bg-primary dg-live-dot" aria-hidden />
-            searching…
+            <span className="dg-live-dot size-1.5 rounded-full bg-primary" aria-hidden />
+            searching
           </>
         ) : pool ? (
           <>
             <span className="size-1.5 rounded-full bg-accent" aria-hidden />
-            {found} restaurants, {pool!.events.length} venues live
+            {pool.restaurants.length} places found live
           </>
         ) : (
           <>nothing searched yet</>
@@ -86,18 +95,18 @@ export function StatusPill() {
       <span
         className="rule-chip"
         title={
-          live
+          webmcp.bound
             ? `Tools registered on ${webmcp.surface}`
-            : "No WebMCP host detected. The page still works, and the built-in agent drives the identical tools"
+            : "No WebMCP host here. The built-in agent drives the identical tools."
         }
       >
         <span
-          className={`size-1.5 rounded-full ${live ? "bg-accent dg-live-dot" : "bg-muted-foreground"}`}
+          className={`size-1.5 rounded-full ${webmcp.bound ? "dg-live-dot bg-accent" : "bg-muted-foreground"}`}
           aria-hidden
         />
-        {live ? webmcp.surface : "WebMCP host not detected"}
+        {webmcp.bound ? webmcp.surface : "no WebMCP host"}
       </span>
-      <span className="rule-chip">{webmcp.tools.length} tools live</span>
+      <span className="rule-chip">{webmcp.tools.length} tools</span>
       {webmcp.agentSeen ? (
         <span className="rule-chip border-accent/50 text-accent">agent connected</span>
       ) : null}
@@ -119,13 +128,7 @@ export function CommandBar({
   const busy = demoRunning || searching;
 
   return (
-    <div className="surface glow-ring p-4 sm:p-5">
-      <label
-        htmlFor="wish"
-        className="mb-2 block font-display text-xs font-semibold tracking-widest text-primary uppercase"
-      >
-        Say it once
-      </label>
+    <div className="surface glow-ring p-5">
       <div className="flex flex-col gap-3 sm:flex-row">
         <textarea
           id="wish"
@@ -136,19 +139,20 @@ export function CommandBar({
           }}
           rows={2}
           spellCheck={false}
-          className="dg-scroll min-h-[4.5rem] flex-1 resize-none rounded-xl border border-input bg-ink/60 px-4 py-3 font-sans text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/70 focus:ring-2 focus:ring-primary/25"
-          placeholder="Plan something fun for Friday, under $180, nothing before 7…"
+          aria-label="Describe the evening you want"
+          className="dg-scroll min-h-[4.5rem] flex-1 resize-none rounded-lg border border-input bg-ink/50 px-4 py-3 font-sans text-base leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
+          placeholder="Friday in Savannah, under $180, nothing before 7, she hates oysters"
         />
         <button
           type="button"
           onClick={() => onRun(text)}
           disabled={busy || !text.trim()}
-          className="dg-pulse h-fit shrink-0 self-stretch rounded-xl bg-primary px-6 py-3 font-display text-sm font-bold tracking-wide text-primary-foreground transition disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
+          className="h-fit shrink-0 self-stretch rounded-lg bg-primary px-7 py-3 font-display text-lg text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
         >
-          {busy ? "Working…" : "Grant the wish"}
+          {busy ? "Working" : "Plan it"}
         </button>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {samples.slice(1).map((s) => (
           <button
             key={s}
@@ -156,22 +160,15 @@ export function CommandBar({
             onClick={() => setText(s)}
             className="rule-chip max-w-full text-left transition hover:border-primary/60 hover:text-foreground"
           >
-            <span className="truncate">{s.length > 58 ? `${s.slice(0, 56)}…` : s}</span>
+            <span className="truncate">{s.split(".")[0]}</span>
           </button>
         ))}
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">
-        In a WebMCP browser, say this to your agent instead. It calls the same tools this button
-        does.
-        <kbd className="ml-2 rounded border border-border px-1.5 py-0.5 font-mono text-[10px]">
-          ⌘↵
-        </kbd>
-      </p>
     </div>
   );
 }
 
-/* ----------------------------------------------------- constraint deck ---- */
+/* ----------------------------------------------------- what you asked ---- */
 
 function Dial({
   label,
@@ -192,9 +189,9 @@ function Dial({
 }) {
   return (
     <label className="block">
-      <div className="mb-1.5 flex items-baseline justify-between">
+      <div className="mb-1 flex items-baseline justify-between gap-2">
         <span className="text-xs text-muted-foreground">{label}</span>
-        <span className="font-mono text-xs font-medium text-foreground">{display}</span>
+        <span className="font-display text-base text-foreground">{display}</span>
       </div>
       <input
         type="range"
@@ -203,7 +200,7 @@ function Dial({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-secondary accent-primary"
+        className="h-1 w-full cursor-pointer appearance-none rounded-full bg-secondary accent-primary"
       />
     </label>
   );
@@ -213,16 +210,21 @@ export function ConstraintDeck() {
   const { constraints: c, vetoes, place, searching, notice } = useGenie();
   const [newVeto, setNewVeto] = useState("");
   const [where, setWhere] = useState("");
-
   const patch = useCallback((next: Partial<typeof c>) => store.replan({ ...c, ...next }), [c]);
 
   return (
     <Panel
-      title="Your rules"
-      hint="Set these with your thumb. Your agent reads every value here before it asks you a single question."
+      title="What you asked for"
+      hint="Your agent reads every value here before it asks you a single question."
+      quiet
     >
+      <p className="mb-4 font-display text-lg leading-snug text-foreground">
+        Tonight in {place?.label ?? "somewhere you have not said yet"}, for {c.party}, under{" "}
+        {money(c.budget)}, nothing before {fmtTime(c.earliest)}, home by {fmtTime(c.latestEnd)}.
+      </p>
+
       <form
-        className="mb-4 border-b border-border pb-4"
+        className="mb-5 flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (!where.trim()) return;
@@ -230,54 +232,35 @@ export function ConstraintDeck() {
           setWhere("");
         }}
       >
-        <div className="mb-1.5 flex items-baseline justify-between gap-2">
-          <span className="text-xs text-muted-foreground">Tonight you are in</span>
-          {searching ? (
-            <span className="font-mono text-[10px] text-primary dg-live-dot">searching…</span>
-          ) : null}
-        </div>
-        <p
-          className="mb-2 truncate font-display text-sm font-semibold text-foreground"
-          title={place?.label ?? ""}
-        >
-          {place?.label ?? "not set"}
-        </p>
-        <div className="flex gap-2">
-          <input
-            value={where}
-            onChange={(e) => setWhere(e.target.value)}
-            placeholder="Fredericksburg, VA"
-            className="min-w-0 flex-1 rounded-lg border border-input bg-ink/60 px-3 py-1.5 text-xs outline-none focus:border-primary/70"
-          />
-          <button
-            type="submit"
-            disabled={searching}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground disabled:opacity-50"
-          >
-            Search
-          </button>
-        </div>
+        <input
+          value={where}
+          onChange={(e) => setWhere(e.target.value)}
+          placeholder="Anywhere on earth"
+          aria-label="Change location"
+          className="min-w-0 flex-1 rounded-lg border border-input bg-ink/50 px-3 py-2 text-sm outline-none focus:border-primary/70"
+        />
         <button
-          type="button"
-          onClick={() => void store.useMyLocation()}
+          type="submit"
           disabled={searching}
-          className="mt-2 text-[11px] text-primary underline-offset-4 hover:underline disabled:opacity-50"
+          className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground transition hover:border-primary hover:text-foreground disabled:opacity-50"
         >
-          or use my location
+          Search here
         </button>
-        {notice ? (
-          <p className="mt-2 text-[11px] leading-relaxed text-destructive">{notice}</p>
-        ) : (
-          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/70">
-            Anywhere in the world. Nothing about any place is stored: each search queries the
-            sources fresh with your filters compiled in.
-          </p>
-        )}
       </form>
+      <button
+        type="button"
+        onClick={() => void store.useMyLocation()}
+        disabled={searching}
+        className="-mt-3 mb-4 block text-xs text-primary underline-offset-4 hover:underline disabled:opacity-50"
+      >
+        or use my location
+      </button>
 
-      <div className="space-y-4">
+      {notice ? <p className="mb-4 text-xs leading-relaxed text-rose">{notice}</p> : null}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
         <Dial
-          label="Whole evening, all in"
+          label="Whole evening"
           value={c.budget}
           display={money(c.budget)}
           min={40}
@@ -319,42 +302,29 @@ export function ConstraintDeck() {
           max={45}
           onChange={(maxDriveMinutes) => patch({ maxDriveMinutes })}
         />
-        <Dial
-          label="Walk between stops"
-          value={c.maxWalkMinutes}
-          display={`${c.maxWalkMinutes} min`}
-          min={2}
-          max={25}
-          onChange={(maxWalkMinutes) => patch({ maxWalkMinutes })}
-        />
-
-        <div>
-          <div className="mb-1.5 flex items-baseline justify-between">
-            <span className="text-xs text-muted-foreground">Party</span>
-            <span className="font-mono text-xs font-medium text-foreground">{c.party}</span>
-          </div>
-          <div className="flex gap-1.5">
-            {[2, 3, 4, 6].map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => patch({ party: n })}
-                className={`flex-1 rounded-lg border py-1.5 font-mono text-xs transition ${
-                  c.party === n
-                    ? "border-primary bg-primary/15 text-foreground"
-                    : "border-border text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
-      <div className="mt-5 border-t border-border pt-4">
+      <div className="mt-5 flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">Party</span>
+        {[2, 3, 4, 6].map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => patch({ party: n })}
+            className={`size-8 rounded-full border font-display text-base transition ${
+              c.party === n
+                ? "border-primary bg-primary/15 text-foreground"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-5 border-t border-border/60 pt-4">
         <p className="mb-2 text-xs text-muted-foreground">
-          Never again. Saved in this browser, and the genie honours these on your next visit too.
+          Never again. Saved in this browser, and honoured on your next visit.
         </p>
         <div className="flex flex-wrap gap-1.5">
           {vetoes.length === 0 ? (
@@ -368,7 +338,7 @@ export function ConstraintDeck() {
                 store.removeVeto(v);
                 store.replan();
               }}
-              className="rule-chip border-destructive/40 text-foreground transition hover:border-destructive"
+              className="rule-chip border-rose/40 text-foreground transition hover:border-rose"
               title={`Stop avoiding ${v}`}
             >
               {v} <span className="text-muted-foreground">×</span>
@@ -387,8 +357,9 @@ export function ConstraintDeck() {
           <input
             value={newVeto}
             onChange={(e) => setNewVeto(e.target.value)}
-            placeholder="oysters, loud, korean…"
-            className="min-w-0 flex-1 rounded-lg border border-input bg-ink/60 px-3 py-1.5 text-xs outline-none focus:border-primary/70"
+            placeholder="oysters, loud, chains"
+            aria-label="Rule something out"
+            className="min-w-0 flex-1 rounded-lg border border-input bg-ink/50 px-3 py-1.5 text-xs outline-none focus:border-primary/70"
           />
           <button
             type="submit"
@@ -402,42 +373,23 @@ export function ConstraintDeck() {
   );
 }
 
-/* --------------------------------------------------------------- stage ---- */
+/* ----------------------------------------------------- the evening ---- */
 
 function Leg({ leg, index }: { leg: Plan["legs"][number]; index: number }) {
   return (
     <li
-      className="dg-rise relative flex gap-4 pb-6 last:pb-0"
-      style={{ animationDelay: `${index * 90}ms` }}
+      className="dg-rise grid grid-cols-[4.5rem_1fr_auto] items-baseline gap-x-4 border-t border-border/50 py-4 first:border-t-0"
+      style={{ animationDelay: `${index * 80}ms` }}
     >
-      <div className="flex w-14 shrink-0 flex-col items-end pt-1">
-        <span className="font-mono text-xs font-semibold text-foreground">
-          {fmtTime(leg.start)}
-        </span>
-        <span className="font-mono text-[10px] text-muted-foreground">{fmtTime(leg.end)}</span>
+      <time className="font-display text-2xl leading-none text-foreground tabular-nums">
+        {fmtTime(leg.start)}
+      </time>
+      <div className="min-w-0">
+        <h3 className="font-display text-2xl leading-tight text-foreground">{leg.title}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{leg.subtitle}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground/70">{leg.detail}</p>
       </div>
-      <div className="relative flex flex-col items-center">
-        <span
-          className={`z-10 grid size-9 place-items-center rounded-full border text-base ${
-            leg.kind === "parking"
-              ? "border-border bg-secondary"
-              : "border-primary/50 bg-primary/15"
-          }`}
-        >
-          {leg.glyph}
-        </span>
-        <span className="dg-rail absolute top-9 bottom-0 w-px" aria-hidden />
-      </div>
-      <div className="min-w-0 flex-1 pt-0.5">
-        <div className="flex items-baseline justify-between gap-3">
-          <h3 className="truncate font-display text-base font-semibold text-foreground">
-            {leg.title}
-          </h3>
-          <span className="shrink-0 font-mono text-sm text-primary">{money(leg.cost)}</span>
-        </div>
-        <p className="mt-0.5 text-xs text-muted-foreground">{leg.subtitle}</p>
-        <p className="mt-1 text-xs text-muted-foreground/70">{leg.detail}</p>
-      </div>
+      <span className="font-display text-xl text-primary tabular-nums">{money(leg.cost)}</span>
     </li>
   );
 }
@@ -445,21 +397,19 @@ function Leg({ leg, index }: { leg: Plan["legs"][number]; index: number }) {
 function ChecksTable({ checks }: { checks: store.State["checks"] }) {
   if (!checks.length) return null;
   return (
-    <div className="mt-5 border-t border-border pt-4">
-      <p className="mb-2 font-display text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-        Every rule you set, checked
+    <div className="mt-6 border-t border-border/50 pt-4">
+      <p className="mb-3 text-sm text-muted-foreground">
+        Every rule you set, checked against what you got.
       </p>
-      <ul className="grid gap-1.5 sm:grid-cols-2">
+      <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
         {checks.map((c) => (
-          <li key={c.label} className="flex items-center gap-2 text-xs">
-            <span
-              className={`grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-bold ${c.ok ? "bg-accent/20 text-accent" : "bg-destructive/20 text-destructive"}`}
-            >
+          <li key={c.label} className="flex items-baseline gap-2 text-sm">
+            <span className={c.ok ? "text-accent" : "text-rose"} aria-hidden>
               {c.ok ? "✓" : "✕"}
             </span>
             <span className="text-muted-foreground">{c.label}</span>
-            <span className="ml-auto font-mono text-foreground">{c.actual}</span>
-            <span className="font-mono text-muted-foreground/60">/ {c.target}</span>
+            <span className="ml-auto text-foreground tabular-nums">{c.actual}</span>
+            <span className="text-muted-foreground/60 tabular-nums">of {c.target}</span>
           </li>
         ))}
       </ul>
@@ -489,47 +439,51 @@ export function Stage() {
 
   if (!plan) {
     return (
-      <Panel title="The evening" hint="Nothing planned yet.">
-        <div className="py-12 text-center">
-          <p className="font-display text-lg text-muted-foreground">
+      <Panel>
+        <div className="py-16 text-center">
+          <p className="font-display text-3xl text-foreground">
             {searching ? (
-              <span className="dg-shimmer">Searching…</span>
+              <span className="dg-shimmer">Looking for your evening</span>
             ) : place ? (
               "Say what you want. Once."
             ) : (
               "Tell me where you are."
             )}
           </p>
-          <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-muted-foreground/70">
+          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
             {notice ??
               (trace.length
                 ? trace[trace.length - 1]
-                : "Dinner, something after, and somewhere to park, solved together, not one tab at a time.")}
+                : "Dinner, something after, and somewhere to leave the car. Solved together, not one tab at a time.")}
           </p>
           {shortfall?.reason === "budget" && shortfall.breakdown ? (
-            <div className="mx-auto mt-4 max-w-sm rounded-xl border border-primary/40 bg-primary/10 p-3 text-left">
-              <p className="font-display text-xs font-semibold tracking-widest text-primary uppercase">
-                The maths
-              </p>
-              <ul className="mt-2 space-y-1 font-mono text-[11px] text-foreground">
+            <div className="mx-auto mt-6 max-w-xs rounded-lg border border-primary/40 bg-primary/10 p-4 text-left">
+              <p className="mb-2 text-sm text-foreground">Here is the arithmetic.</p>
+              <ul className="space-y-1 text-sm text-muted-foreground">
                 <li className="flex justify-between">
                   <span>dinner</span>
-                  <span>{money(shortfall.breakdown.dinner)}</span>
+                  <span className="text-foreground tabular-nums">
+                    {money(shortfall.breakdown.dinner)}
+                  </span>
                 </li>
                 <li className="flex justify-between">
                   <span>tickets</span>
-                  <span>{money(shortfall.breakdown.tickets)}</span>
+                  <span className="text-foreground tabular-nums">
+                    {money(shortfall.breakdown.tickets)}
+                  </span>
                 </li>
                 <li className="flex justify-between">
                   <span>parking</span>
-                  <span>{money(shortfall.breakdown.parking)}</span>
+                  <span className="text-foreground tabular-nums">
+                    {money(shortfall.breakdown.parking)}
+                  </span>
                 </li>
-                <li className="flex justify-between border-t border-border pt-1 text-primary">
-                  <span>cheapest that fits your other rules</span>
-                  <span>{money(shortfall.cheapestTotal ?? 0)}</span>
+                <li className="mt-1 flex justify-between border-t border-border pt-1 text-primary">
+                  <span>cheapest that fits</span>
+                  <span className="tabular-nums">{money(shortfall.cheapestTotal ?? 0)}</span>
                 </li>
               </ul>
-              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                 {shortfall.suggestion}
               </p>
             </div>
@@ -540,66 +494,72 @@ export function Stage() {
   }
 
   return (
-    <Panel
-      title="The evening"
-      hint={`One plan, not ten links. ${pool ? `${pool.restaurants.length} restaurants and ${pool.events.length} venues came back live, then ` : ""}${considered} combinations were evaluated.`}
-      right={
-        <div className="text-right">
-          <div className="font-display text-2xl font-bold text-primary">{money(plan.total)}</div>
-          <div className="text-[10px] tracking-wide text-muted-foreground uppercase">
-            {money(plan.constraints.budget - plan.total)} under budget
+    <Panel>
+      <header className="mb-5 flex items-end justify-between gap-4">
+        <div>
+          <h2 className="font-display text-3xl leading-none text-foreground">Your evening</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {pool
+              ? `${pool.restaurants.length} places and ${pool.events.length} venues came back live, then `
+              : ""}
+            {considered.toLocaleString()} combinations checked.
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="font-display text-4xl leading-none text-primary tabular-nums">
+            {money(plan.total)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            of your {money(plan.constraints.budget)}
           </div>
         </div>
-      }
-    >
-      <ol key={revision} className="relative">
-        {plan.legs.map((leg, i) => (
-          <Leg key={`${leg.kind}-${leg.id}-${revision}`} leg={leg} index={i} />
-        ))}
-      </ol>
+      </header>
 
       {relaxations.length ? (
-        <p className="mt-1 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs leading-relaxed text-foreground">
-          <span className="font-semibold">Not an exact match. </span>
-          Nothing here fit your exact rules, so the genie widened{" "}
+        <p className="mb-4 rounded-lg border border-primary/40 bg-primary/10 px-4 py-3 text-sm leading-relaxed text-foreground">
+          Not an exact match. Nothing fit your rules exactly, so the genie widened{" "}
           {relaxations.map((r, i) => (
             <span key={r.label}>
               {i > 0 ? " and " : ""}
-              <span className="text-primary">{r.label}</span> from {r.from} to {r.to}
+              {r.label} from {r.from} to {r.to}
             </span>
           ))}
           . Everything else still holds.
         </p>
       ) : null}
 
-      <p className="mt-1 rounded-lg border border-border bg-ink/40 px-3 py-2 text-xs text-muted-foreground">
-        <span className="text-foreground">Why this one: </span>
-        {plan.why.join(" · ")}
+      <ol key={revision}>
+        {plan.legs.map((leg, i) => (
+          <Leg key={`${leg.kind}-${leg.id}-${revision}`} leg={leg} index={i} />
+        ))}
+      </ol>
+
+      <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <span className="text-foreground">Why this one. </span>
+        {plan.why.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(". ")}.
       </p>
 
       <ChecksTable checks={checks} />
 
       {alternates.length ? (
-        <div className="mt-5 border-t border-border pt-4">
-          <p className="mb-2 font-display text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-            Or, genuinely different
-          </p>
+        <div className="mt-6 border-t border-border/50 pt-4">
+          <p className="mb-3 text-sm text-muted-foreground">Or, genuinely different:</p>
           <div className="grid gap-2 sm:grid-cols-2">
             {alternates.map((alt, i) => (
               <button
                 key={alt.id}
                 type="button"
                 onClick={() => void callTool("pick_alternate", { which: i + 1 }, "you")}
-                className="rounded-xl border border-border bg-ink/40 p-3 text-left transition hover:border-primary/60"
+                className="rounded-lg border border-border bg-ink/40 p-3 text-left transition hover:border-primary/60"
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="truncate font-display text-sm font-semibold text-foreground">
-                    {alt.dinner.restaurant.glyph} {alt.dinner.restaurant.name}
+                  <span className="truncate font-display text-lg text-foreground">
+                    {alt.dinner.restaurant.name}
                   </span>
-                  <span className="font-mono text-xs text-primary">{money(alt.total)}</span>
+                  <span className="shrink-0 text-primary tabular-nums">{money(alt.total)}</span>
                 </div>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  then {alt.event.event.glyph} {alt.event.event.name}
+                  then {alt.event.event.venue}
                 </p>
               </button>
             ))}
@@ -607,7 +567,7 @@ export function Stage() {
         </div>
       ) : null}
 
-      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+      <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border/50 pt-5">
         <button
           type="button"
           onClick={() =>
@@ -617,7 +577,7 @@ export function Stage() {
               "you",
             )
           }
-          className="rounded-xl bg-primary px-5 py-2.5 font-display text-sm font-bold text-primary-foreground transition hover:brightness-110"
+          className="rounded-lg bg-primary px-6 py-3 font-display text-lg text-primary-foreground transition hover:brightness-110"
         >
           Book the whole night
         </button>
@@ -649,46 +609,62 @@ export function Stage() {
   );
 }
 
-/* ------------------------------------------------------------- receipt ---- */
+/* ----------------------------------------------------------- receipt ---- */
 
 function Receipt() {
   const { booking, plan } = useGenie();
-  if (!booking) return null;
+  if (!booking || !plan) return null;
+  const handoff = buildHandoff(plan);
+
   return (
-    <Panel
-      title="Booked"
-      hint="Three reservations, one call, one confirmation. Nothing here was booked without you pressing a button."
-      right={<div className="font-mono text-xs text-accent">{booking.confirmation}</div>}
-    >
-      <ul className="space-y-3">
-        {booking.lines.map((l, i) => (
+    <Panel>
+      <header className="mb-5 flex items-end justify-between gap-4">
+        <div>
+          <h2 className="font-display text-3xl leading-none text-foreground">Held for you</h2>
+          <p className="mt-2 max-w-prose text-sm leading-relaxed text-muted-foreground">
+            Three holds, one confirmation, nothing booked without you pressing a button. Date Genie
+            cannot complete a real reservation, because no booking site exposes tools for an agent
+            to call yet. So here is the last tap for each, in the order you need it.
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="font-display text-3xl leading-none text-accent">
+            {money(booking.total)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{booking.confirmation}</div>
+        </div>
+      </header>
+
+      <ul className="space-y-2">
+        {handoff.map((link, i) => (
           <li
-            key={l.confirmation}
-            className="dg-rise flex items-start gap-3 rounded-xl border border-border bg-ink/40 p-3"
-            style={{ animationDelay: `${i * 110}ms` }}
+            key={`${link.kind}-${i}`}
+            className="dg-rise"
+            style={{ animationDelay: `${i * 90}ms` }}
           >
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-display text-sm font-semibold text-foreground">
-                {l.label}
+            <a
+              href={link.href}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="flex items-baseline gap-3 rounded-lg border border-border bg-ink/40 p-4 transition hover:border-primary/60"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-display text-xl text-foreground">{link.label}</div>
+                <div className="text-sm text-muted-foreground">{link.detail}</div>
               </div>
-              <div className="text-xs text-muted-foreground">{l.detail}</div>
-              <div className="mt-1 font-mono text-[11px] text-accent">{l.confirmation}</div>
-            </div>
-            <span className="font-mono text-sm text-primary">{money(l.cost)}</span>
+              <span className="shrink-0 text-sm text-primary">{link.action}</span>
+            </a>
           </li>
         ))}
       </ul>
-      <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-        <span className="text-xs text-muted-foreground">Total charged on arrival</span>
-        <span className="font-display text-xl font-bold text-primary">{money(booking.total)}</span>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
+
+      <div className="mt-5 flex flex-wrap gap-2 border-t border-border/50 pt-5">
         <button
           type="button"
-          onClick={() => plan && downloadIcs(plan, booking)}
-          className="rounded-xl bg-accent px-4 py-2 font-display text-sm font-bold text-accent-foreground transition hover:brightness-110"
+          onClick={() => downloadIcs(plan, booking)}
+          className="rounded-lg bg-accent px-5 py-2.5 font-display text-lg text-accent-foreground transition hover:brightness-110"
         >
-          Add all three to calendar
+          Add all three to your calendar
         </button>
         <button
           type="button"
@@ -702,7 +678,7 @@ function Receipt() {
   );
 }
 
-/* ------------------------------------------------------- approval gate ---- */
+/* ------------------------------------------------------ approval gate ---- */
 
 export function ApprovalSheet() {
   const { approval } = useGenie();
@@ -717,45 +693,46 @@ export function ApprovalSheet() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/70 p-3 backdrop-blur-sm sm:items-center sm:p-6"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/80 p-3 backdrop-blur-sm sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-label="Confirm booking"
     >
-      <div className="dg-rise glow-ring w-full max-w-lg rounded-2xl border border-primary/40 bg-card p-5 shadow-2xl">
+      <div className="dg-rise glow-ring w-full max-w-lg rounded-xl border border-primary/40 bg-card p-6 shadow-2xl">
         <div className="flex items-center gap-2">
-          <span className="size-2 rounded-full bg-primary dg-live-dot" aria-hidden />
-          <p className="font-display text-xs font-semibold tracking-widest text-primary uppercase">
-            Your agent is waiting on you
-          </p>
+          <span className="dg-live-dot size-2 rounded-full bg-primary" aria-hidden />
+          <p className="text-sm text-primary">Your agent is waiting on you</p>
         </div>
-        <p className="mt-3 font-display text-lg leading-snug font-semibold text-foreground">
+        <p className="mt-3 font-display text-2xl leading-snug text-foreground">
           {approval.summary}
         </p>
-        <p className="mt-1 font-mono text-sm text-primary">{money(approval.total)} total</p>
-        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-2 font-display text-3xl text-primary tabular-nums">
+          {money(approval.total)}
+        </p>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           The tool call is suspended right now. It has no timeout and no default. It resolves when
           you press one of these, and not before.
         </p>
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="Optional: tell it why (goes back to the agent)"
-          className="mt-3 w-full rounded-lg border border-input bg-ink/60 px-3 py-2 text-xs outline-none focus:border-primary/70"
+          placeholder="Optional: tell it why, and the agent will hear you"
+          aria-label="Note to the agent"
+          className="mt-4 w-full rounded-lg border border-input bg-ink/50 px-3 py-2 text-sm outline-none focus:border-primary/70"
         />
         <div className="mt-4 flex gap-2">
           <button
             ref={ref}
             type="button"
             onClick={() => store.resolveApproval(true, note.trim() || undefined)}
-            className="flex-1 rounded-xl bg-primary px-4 py-3 font-display text-sm font-bold text-primary-foreground transition hover:brightness-110"
+            className="flex-1 rounded-lg bg-primary px-4 py-3 font-display text-lg text-primary-foreground transition hover:brightness-110"
           >
             Confirm and book it
           </button>
           <button
             type="button"
             onClick={() => store.resolveApproval(false, note.trim() || undefined)}
-            className="rounded-xl border border-border px-4 py-3 font-display text-sm font-semibold text-muted-foreground transition hover:border-destructive hover:text-foreground"
+            className="rounded-lg border border-border px-5 py-3 font-display text-lg text-muted-foreground transition hover:border-rose hover:text-foreground"
           >
             Not this
           </button>
@@ -770,13 +747,10 @@ export function ApprovalSheet() {
 function argPreview(args: unknown): string {
   if (!args || typeof args !== "object" || !Object.keys(args).length) return "";
   const s = JSON.stringify(args);
-  return s.length > 68 ? `${s.slice(0, 66)}…` : s;
+  return s.length > 54 ? `${s.slice(0, 52)}…` : s;
 }
-
-function resultText(result: unknown): string {
-  const r = result as { content?: { text?: string }[] } | undefined;
-  return r?.content?.[0]?.text ?? "";
-}
+const resultText = (result: unknown) =>
+  (result as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text ?? "";
 
 export function ToolConsole() {
   const { calls, narration, webmcp } = useGenie();
@@ -784,16 +758,17 @@ export function ToolConsole() {
 
   return (
     <Panel
-      title="Agent console"
-      hint="Every tool call, as it happens. Nothing your agent does here is invisible to you."
-      right={<span className="font-mono text-[10px] text-muted-foreground">{calls.length}</span>}
+      className="lg:sticky lg:top-6"
+      title="What your agent did"
+      hint="Every tool call, as it happens. Nothing here is invisible to you."
+      quiet
     >
       {narration.length ? (
-        <div className="mb-4 space-y-1.5">
+        <div className="mb-4 space-y-1.5 border-l-2 border-primary/40 pl-3">
           {narration.slice(-3).map((n, i) => (
             <p
               key={`${n}-${i}`}
-              className="dg-rise text-xs leading-relaxed text-foreground/90 italic"
+              className="dg-rise text-sm leading-relaxed text-foreground/90 italic"
             >
               {n}
             </p>
@@ -805,27 +780,21 @@ export function ToolConsole() {
         <p className="py-6 text-center text-xs text-muted-foreground/70">
           {webmcp.bound
             ? "Registered and idle. Ask your agent to plan something."
-            : "No calls yet. Press Grant the wish and watch."}
+            : "Press Plan it and watch."}
         </p>
       ) : (
-        <ul className="dg-scroll max-h-[26rem] space-y-1.5 overflow-y-auto pr-1">
+        <ul className="dg-scroll max-h-[22rem] space-y-1 overflow-y-auto pr-1">
           {calls.map((c) => {
             const isOpen = open === c.id;
             return (
-              <li key={c.id} className="dg-rise rounded-lg border border-border bg-ink/40">
+              <li key={c.id} className="dg-rise rounded-md border border-border/60 bg-ink/40">
                 <button
                   type="button"
                   onClick={() => setOpen(isOpen ? null : c.id)}
                   className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
                 >
                   <span
-                    className={`size-1.5 shrink-0 rounded-full ${
-                      c.error
-                        ? "bg-destructive"
-                        : c.ms === undefined
-                          ? "bg-primary dg-live-dot"
-                          : "bg-accent"
-                    }`}
+                    className={`size-1.5 shrink-0 rounded-full ${c.error ? "bg-rose" : c.ms === undefined ? "dg-live-dot bg-primary" : "bg-accent"}`}
                     aria-hidden
                   />
                   <span className="truncate font-mono text-[11px] text-foreground">{c.name}</span>
@@ -833,12 +802,12 @@ export function ToolConsole() {
                     {argPreview(c.args)}
                   </span>
                   <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-                    {c.caller === "agent" ? "agent" : c.caller === "you" ? "you" : "demo"}
-                    {c.ms !== undefined ? ` · ${c.ms}ms` : " · …"}
+                    {c.caller}
+                    {c.ms !== undefined ? ` ${c.ms}ms` : ""}
                   </span>
                 </button>
                 {isOpen ? (
-                  <pre className="dg-scroll max-h-56 overflow-auto border-t border-border px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                  <pre className="dg-scroll max-h-56 overflow-auto border-t border-border/60 px-2.5 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
                     {resultText(c.result) || c.error || "…"}
                   </pre>
                 ) : null}
@@ -858,7 +827,8 @@ export function SourcesPanel() {
   return (
     <Panel
       title="Where this came from"
-      hint="Nothing about any place is stored in this page. Every plan above is a fresh search issued when you asked, with your filters compiled into the query."
+      hint="Nothing about any place is stored here. Every plan is a fresh search, issued when you asked."
+      quiet
     >
       <ul className="space-y-1.5">
         {ACTIVE_ADAPTERS.map((a) => {
@@ -866,54 +836,56 @@ export function SourcesPanel() {
           return (
             <li
               key={a.id}
-              className="flex items-center gap-2 rounded-lg border border-accent/30 bg-ink/40 px-2.5 py-2 text-xs"
+              className="flex items-baseline gap-2 rounded-md border border-accent/25 bg-ink/40 px-3 py-2 text-sm"
             >
-              <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-              <span className="font-medium text-foreground">{a.label}</span>
-              <span className="truncate text-muted-foreground">{a.attribution}</span>
-              {report ? (
-                <span className="ml-auto shrink-0 font-mono text-[10px] text-accent">
-                  {report.counts.restaurants}r · {report.counts.events}e · {report.counts.parking}p
-                  · {report.ms}ms
-                </span>
-              ) : (
-                <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-                  idle
-                </span>
-              )}
+              <span
+                className="size-1.5 shrink-0 translate-y-[-2px] rounded-full bg-accent"
+                aria-hidden
+              />
+              <span className="text-foreground">{a.label}</span>
+              <span className="truncate text-xs text-muted-foreground">{a.attribution}</span>
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-accent">
+                {report
+                  ? `${report.counts.restaurants}r ${report.counts.events}e ${report.ms}ms`
+                  : "idle"}
+              </span>
             </li>
           );
         })}
-        <li className="flex items-center gap-2 rounded-lg border border-accent/30 bg-ink/40 px-2.5 py-2 text-xs">
-          <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-          <span className="font-medium text-foreground">Cloudflare Workers AI</span>
-          <span className="truncate text-muted-foreground">
+        <li className="flex items-baseline gap-2 rounded-md border border-accent/25 bg-ink/40 px-3 py-2 text-sm">
+          <span
+            className="size-1.5 shrink-0 translate-y-[-2px] rounded-full bg-accent"
+            aria-hidden
+          />
+          <span className="text-foreground">Cloudflare Workers AI</span>
+          <span className="truncate text-xs text-muted-foreground">
             turns your sentence into constraints
           </span>
           <span className="ml-auto shrink-0 font-mono text-[10px] text-accent">
             {understanding
               ? understanding.via === "workers-ai"
                 ? "llama 3.3 70b"
-                : "rules fallback"
+                : "rules"
               : "idle"}
           </span>
         </li>
       </ul>
 
-      <p className="mt-4 mb-2 font-display text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-        Not available to any agent, anywhere
-      </p>
-      <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+      <p className="mt-5 mb-2 text-sm text-foreground">Not available to any agent, anywhere.</p>
+      <p className="mb-3 max-w-prose text-xs leading-relaxed text-muted-foreground">
         No major booking site exposes WebMCP tools yet, so no agent can compose them. Here is
         exactly what we would call the day they do. If you work at one of these, this is the whole
         ask.
       </p>
       <ul className="space-y-1.5">
         {WANTED_SOURCES.map((a) => (
-          <li key={a.id} className="rounded-lg border border-border bg-ink/40 px-2.5 py-2">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" aria-hidden />
-              <span className="font-medium text-foreground">{a.label}</span>
+          <li key={a.id} className="rounded-md border border-border/60 bg-ink/40 px-3 py-2">
+            <div className="flex items-baseline gap-2 text-sm">
+              <span
+                className="size-1.5 shrink-0 translate-y-[-2px] rounded-full bg-muted-foreground"
+                aria-hidden
+              />
+              <span className="text-foreground">{a.label}</span>
               <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
                 {a.provides.join(", ")}
               </span>
@@ -939,12 +911,13 @@ export function ToolSurface() {
   return (
     <Panel
       title="What your agent can do here"
-      hint="These are registered on the live WebMCP surface. The last two appear and disappear with page state. An agent cannot call book_approved_plan before a human has approved anything, because until then the tool does not exist."
+      hint="Registered on the live WebMCP surface. The last two appear and disappear with page state: an agent cannot call book_approved_plan before a human has approved anything, because until then the tool does not exist."
+      quiet
       right={
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+          className="shrink-0 text-xs text-muted-foreground underline-offset-4 hover:underline"
         >
           {open ? "collapse" : "expand"}
         </button>
@@ -952,22 +925,16 @@ export function ToolSurface() {
     >
       <ul className="grid gap-1.5 sm:grid-cols-2">
         {tools.map((t) => (
-          <li key={t.name} className="rounded-lg border border-border bg-ink/40 px-2.5 py-2">
+          <li key={t.name} className="rounded-md border border-border/60 bg-ink/40 px-3 py-2">
             <div className="flex items-center gap-2">
               <code className="truncate font-mono text-[11px] text-primary">{t.name}</code>
-              {t.annotations?.readOnlyHint ? (
-                <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[9px] text-muted-foreground">
-                  read
-                </span>
-              ) : t.annotations?.destructiveHint ? (
-                <span className="shrink-0 rounded bg-destructive/20 px-1 py-0.5 text-[9px] text-destructive">
-                  books
-                </span>
-              ) : (
-                <span className="shrink-0 rounded bg-primary/15 px-1 py-0.5 text-[9px] text-primary">
-                  writes
-                </span>
-              )}
+              <span className="ml-auto shrink-0 rounded px-1 py-0.5 text-[9px] text-muted-foreground">
+                {t.annotations?.readOnlyHint
+                  ? "reads"
+                  : t.annotations?.destructiveHint
+                    ? "books"
+                    : "writes"}
+              </span>
             </div>
             {open ? (
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
