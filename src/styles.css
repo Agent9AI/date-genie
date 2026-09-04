@@ -232,6 +232,19 @@
   );
 }
 
+@keyframes dg-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+@utility dg-pulse-bar {
+  animation: dg-breathe 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dg-rise,
   .dg-live-dot,

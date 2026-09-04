@@ -79,6 +79,8 @@ export type State = {
   vetoes: string[];
   webmcp: { bound: boolean; surface: string; tools: string[]; agentSeen: boolean };
   searching: boolean;
+  /** What the search is doing right now, in words, for the human watching. */
+  progress: string;
   /** Set when a search ran and could not produce an evening. Shown verbatim. */
   notice: string | null;
   narration: string[];
@@ -126,6 +128,7 @@ let state: State = {
   vetoes: [],
   webmcp: { bound: false, surface: "none", tools: [], agentSeen: false },
   searching: false,
+  progress: "",
   notice: null,
   narration: [],
   demoRunning: false,
@@ -232,6 +235,35 @@ export async function useMyLocation(): Promise<Place | null> {
   return place;
 }
 
+/**
+ * Warm the city the page opens on, quietly, before anyone presses anything.
+ *
+ * The first visitor to a cold city used to pay 30 seconds for an OpenStreetMap
+ * lookup while the screen said "searching" and nothing else, which reads as
+ * broken. This sets the location so the page is not empty, and pulls the
+ * queries into the edge cache so the first real click is instant. It never
+ * touches the plan, so pressing the button is still the moment something
+ * visibly happens.
+ */
+export async function prefetch(query: string): Promise<void> {
+  if (state.place) return;
+  const place = await geocode(query);
+  if (!place || state.place) return;
+  setHome(place.at);
+  set({ place });
+  const input = {
+    at: place.at,
+    radiusKm: 4,
+    restaurants: { earliest: state.constraints.earliest, party: state.constraints.party },
+    events: { earliest: state.constraints.earliest, latestEnd: state.constraints.latestEnd },
+  };
+  try {
+    await searchWithWidening(input);
+  } catch {
+    /* warming is best effort; a cold first search still works, just slower */
+  }
+}
+
 /* ------------------------------------------------------------- search ---- */
 
 /**
@@ -245,7 +277,12 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
     return;
   }
   const merged: Constraints = { ...c, avoid: [...new Set([...c.avoid, ...state.vetoes])] };
-  set({ searching: true, constraints: merged, notice: null });
+  set({
+    searching: true,
+    constraints: merged,
+    notice: null,
+    progress: `Looking for places near ${place.label}`,
+  });
 
   // A cuisine filter and an activity filter are different queries against
   // different amenities. Mixing them asks for restaurants that serve cinema.
@@ -289,10 +326,25 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
   const generation = ++searchGeneration;
   const fast = await searchWithWidening(input);
   if (generation !== searchGeneration) return;
-  const pool = fast;
+  set({
+    progress: `Found ${fast.restaurants.length} places and ${fast.events.length} venues. Checking combinations`,
+  });
+  let pool = fast;
 
   if (pool.dropped.length) {
     set({ notice: `To find anything at all I had to drop ${pool.dropped.join("; and ")}.` });
+  }
+
+  // OpenStreetMap is a free shared service and it sheds load. When it comes back
+  // empty, Google Maps is not an enhancement any more, it is the only source we
+  // have, so wait for it rather than telling someone there is nothing in their
+  // city. Dropping this rescue when the async flow was simplified is what made
+  // a cold city hang forever instead of degrading.
+  if (pool.restaurants.length < 4 && richSourcesAvailable()) {
+    set({ progress: "OpenStreetMap is busy. Asking Google instead" });
+    const rescued = await enrich(pool, input);
+    if (generation !== searchGeneration) return;
+    if (rescued.restaurants.length > pool.restaurants.length) pool = rescued;
   }
 
   if (!pool.restaurants.length) {

@@ -380,7 +380,7 @@ async function groundedPlaces(env: Env, params: URLSearchParams): Promise<Respon
     [PLACES_FALLBACK_MODEL, 12000],
   ] as const) {
     const places = await askGemini(env.GEMINI_API_KEY, model, prompt, budgetMs);
-    if (places?.length) return json({ places, grounded: true, model }, 200, 3600);
+    if (places?.length) return json({ places, grounded: true, model }, 200, 86400);
   }
   return json({ unavailable: "no_places", places: [] }, 200, 0, false);
 }
@@ -526,10 +526,10 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
       case "/api/osm": {
         const query = url.searchParams.get("q");
         if (!query) return json({ error: "missing q" }, 400);
-        return cached(request, 1800, async () => {
+        return cached(request, 604800, async () => {
           const body = await overpass(query);
           return body
-            ? json(body, 200, 1800)
+            ? json(body, 200, 604800)
             : json({ elements: [], unavailable: "overpass_unreachable" }, 200, 0, false);
         });
       }
@@ -537,7 +537,7 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
       case "/api/geocode": {
         const q = url.searchParams.get("q");
         if (!q) return json({ error: "missing q" }, 400);
-        return cached(request, 86400, async () => {
+        return cached(request, 2592000, async () => {
           const res = await fetch(
             `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
             {
@@ -548,14 +548,16 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
             },
           );
           if (!res.ok) return json({ results: [] }, 200, 0, false);
-          return json({ results: await res.json() }, 200, 86400);
+          return json({ results: await res.json() }, 200, 2592000);
         });
       }
 
       case "/api/places":
-        // An hour of edge cache: real ratings do not move minute to minute, and
-        // one grounded lookup per area serves everyone who searches it.
-        return cached(request, 3600, () => googlePlaces(env, url.searchParams));
+        // A day of edge cache. Ratings and price bands do not move hour to hour,
+        // and one grounded lookup per area serves everyone who searches it. The
+        // previous hour-long TTL meant a city went cold again before anybody
+        // came back to it, which is how a 2 second search became a 37 second one.
+        return cached(request, 86400, () => googlePlaces(env, url.searchParams));
 
       case "/api/yelp":
         return cached(request, 900, () => yelpSearch(env, url.searchParams));

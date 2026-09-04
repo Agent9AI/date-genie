@@ -394,6 +394,33 @@ function Leg({ leg, index }: { leg: Plan["legs"][number]; index: number }) {
   );
 }
 
+/** Three lines where three lines are about to be. Silence reads as broken. */
+function SearchSkeleton() {
+  return (
+    <ul className="mx-auto mt-8 max-w-md space-y-4 text-left" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <li
+          key={i}
+          className="grid grid-cols-[4rem_1fr] items-center gap-4"
+          style={{ opacity: 1 - i * 0.22 }}
+        >
+          <div className="dg-pulse-bar h-5 rounded bg-secondary" />
+          <div className="space-y-2">
+            <div
+              className="dg-pulse-bar h-5 rounded bg-secondary"
+              style={{ width: `${72 - i * 12}%`, animationDelay: `${i * 180}ms` }}
+            />
+            <div
+              className="dg-pulse-bar h-3 rounded bg-secondary/60"
+              style={{ width: `${48 - i * 8}%`, animationDelay: `${i * 240}ms` }}
+            />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ChecksTable({ checks }: { checks: store.State["checks"] }) {
   if (!checks.length) return null;
   return (

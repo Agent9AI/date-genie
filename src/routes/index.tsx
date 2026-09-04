@@ -81,6 +81,8 @@ function DateGenie() {
   useEffect(() => {
     store.hydrate();
     void refreshKeyedAvailability();
+    // Pull the opening city into the edge cache so the first click is instant.
+    void store.prefetch("Arlington, VA");
     const bound = bindWebMcp();
     setReady(true);
     console.info(

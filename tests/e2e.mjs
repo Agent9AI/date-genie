@@ -30,7 +30,9 @@ console.log("--- get_date_context ---\n" + ctx);
 
 // 3. Run the whole flow via the button
 await page.getByRole("button", { name: /^plan it$/i }).click();
-await page.waitForFunction(() => window.dateGenie.getState().plan !== null, null, { timeout: 120000 });
+await page.waitForFunction(() => window.dateGenie.getState().plan !== null, null, {
+  timeout: 120000,
+});
 await page.waitForTimeout(600);
 await page.screenshot({ path: `${shots}/02-planned.png` });
 
