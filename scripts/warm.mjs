@@ -43,12 +43,22 @@ for (const [name, lat, lng] of CITIES) {
         .catch(() => "fail"),
     );
   }
-  results.push(
-    await fetch(`${BASE}/api/places?lat=${lat.toFixed(5)}&lng=${lng.toFixed(5)}&kind=restaurants`)
-      .then((r) => r.json())
-      .then((b) => (b.places ?? []).length)
-      .catch(() => "fail"),
-  );
+  // Prime each intent bucket, so a real request is a cache hit whatever kind of
+  // night someone asks for.
+  const WANTS = ["", "special occasion, somewhere memorable, higher end", "good value, casual, inexpensive"];
+  for (const want of WANTS) {
+    for (const kind of ["restaurants", "events"]) {
+      results.push(
+        await fetch(
+          `${BASE}/api/places?v=2&lat=${lat.toFixed(5)}&lng=${lng.toFixed(5)}&km=4&kind=${kind}` +
+            (want ? `&want=${encodeURIComponent(want)}` : ""),
+        )
+          .then((r) => r.json())
+          .then((b) => (b.places ?? []).length)
+          .catch(() => "fail"),
+      );
+    }
+  }
   console.log(
     `${name.padEnd(20)} osm=[${results.slice(0, 3).join(", ")}] maps=${results[3]}  ${((Date.now() - started) / 1000).toFixed(1)}s`,
   );

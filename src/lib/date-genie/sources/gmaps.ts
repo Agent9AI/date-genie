@@ -13,7 +13,7 @@
  *
  * The model retrieves and structures. It does not choose the evening.
  */
-import { type EventItem, type LatLng, type Restaurant } from "../data";
+import { milesBetween, type EventItem, type LatLng, type Restaurant } from "../data";
 import type { EventQuery, RestaurantQuery, SourceAdapter } from "./types";
 
 type RawPlace = {
@@ -90,16 +90,26 @@ const START_TIMES = ["19:00", "19:30", "20:00", "20:30", "21:00"] as const;
 const pick = <T>(id: string, ch: string, xs: readonly T[]): T =>
   xs[hash(`${id}:${ch}`) % xs.length]!;
 
-// Its own budget, so a slow enrichment degrades the answer instead of the app.
+// A generous budget on purpose: this runs AFTER a plan is already on screen,
+// so waiting costs nobody anything and the answer that lands is the better one.
 async function fetchPlaces(
   at: LatLng,
   kind: "restaurants" | "events",
   want: string,
-  timeoutMs = 9000,
+  radiusKm: number,
 ): Promise<RawPlace[]> {
   try {
-    const url = `/api/places?lat=${at.lat.toFixed(5)}&lng=${at.lng.toFixed(5)}&kind=${kind}${want ? `&want=${encodeURIComponent(want)}` : ""}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    // `v` is a cache-key generation. Bump it when the prompt or the response
+    // shape changes, so nobody is served an answer built to the old contract.
+    const url =
+      `/api/places?v=2&lat=${at.lat.toFixed(5)}&lng=${at.lng.toFixed(5)}` +
+      `&km=${Math.round(radiusKm)}&kind=${kind}${want ? `&want=${encodeURIComponent(want)}` : ""}`;
+    // A generous budget on purpose. The grounded lookup takes about 25 seconds
+    // cold and milliseconds once the edge has it, and it runs after the fast
+    // sources have already produced a plan, so waiting costs nobody anything.
+    // An earlier 9 second budget silently aborted every cold call, which looked
+    // exactly like "Google Maps returned nothing".
+    const res = await fetch(url, { signal: AbortSignal.timeout(50000) });
     if (!res.ok) return [];
     const body = (await res.json()) as { places?: RawPlace[] };
     return Array.isArray(body.places) ? body.places : [];
@@ -108,28 +118,55 @@ async function fetchPlaces(
   }
 }
 
+
 const coords = (p: RawPlace, fallback: LatLng): LatLng =>
   Number.isFinite(p.lat) && Number.isFinite(p.lng) ? { lat: p.lat!, lng: p.lng! } : fallback;
 
+/**
+ * Geography is the one thing never to take a model's word for.
+ *
+ * Asked for restaurants in Charleston, the smaller model answered with
+ * Sullivan's Island, Mt Pleasant and Isle of Palms, all eight to twelve miles
+ * out. Those are real restaurants and a real failure: someone asked for dinner
+ * near where they are. We have coordinates for both ends, so this is arithmetic
+ * rather than a judgement call, and anything outside the search radius is
+ * dropped no matter how good it looks.
+ */
+function withinRadius(at: LatLng, origin: LatLng, radiusKm: number): boolean {
+  const maxMiles = Math.max(1.5, radiusKm * 0.621371 * 1.35);
+  return milesBetween(origin, at) <= maxMiles;
+}
+
 async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
-  // Tell Maps what kind of night this is. Asking for "romantic, around $90 a
-  // head" returns different restaurants than asking for restaurants, which is
-  // the entire advantage of a source that understands language.
+  // Tell Maps what kind of night this is, but from a SMALL vocabulary.
+  //
+  // The first version built this string from the exact budget, the party size
+  // and every avoid term, which made it unique per request. Since it is part of
+  // the cache key, that meant almost every search was a cold 25 second lookup.
+  // Bucketing intent into a handful of profiles means one lookup serves every
+  // "anniversary in Charleston" for the next hour, and `npm run warm` can prime
+  // the buckets ahead of time. Fine-grained filtering still happens locally,
+  // where it is free.
+  const profile = q.targetPerPerson === undefined ? "standard" : q.targetPerPerson >= 65 ? "special" : q.targetPerPerson <= 25 ? "cheap" : "standard";
   const want = [
     q.cuisine,
     ...(q.dietary ?? []),
-    q.occasion ? `${q.occasion}, somewhere special` : "",
+    profile === "special" ? "special occasion, somewhere memorable, higher end" : "",
+    profile === "cheap" ? "good value, casual, inexpensive" : "",
     q.quiet ? "quiet enough for conversation" : "",
-    q.targetPerPerson ? `around $${Math.round(q.targetPerPerson)} per person` : "",
-    q.party && q.party > 4 ? "large groups" : "",
-    ...(q.avoid ?? []).map((a) => `not ${a}`),
   ]
     .filter(Boolean)
     .join(", ");
-  const raw = await fetchPlaces(q.at, "restaurants", want);
+  const raw = await fetchPlaces(q.at, "restaurants", want, q.radiusKm);
   const out: Restaurant[] = [];
+  let dropped = 0;
   for (const p of raw) {
     if (!p.name) continue;
+    const at = coords(p, q.at);
+    if (!withinRadius(at, q.at, q.radiusKm)) {
+      dropped++;
+      continue;
+    }
     const id = `gmaps_${p.name.toLowerCase().replace(/\W+/g, "_")}`;
     const cuisine = (p.cuisine ?? "restaurant").toLowerCase();
     const price = Math.max(8, Math.round(p.approxPerPerson ?? 40));
@@ -146,7 +183,7 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
       name: p.name,
       cuisine: cuisine.replace(/\b\w/g, (c) => c.toUpperCase()),
       neighborhood: p.address?.split(",")[1]?.trim() ?? "nearby",
-      at: coords(p, q.at),
+      at,
       pricePerPerson: price,
       rating: typeof p.rating === "number" ? Math.round(p.rating * 10) / 10 : 4.2,
       slots: [...pick(id, "slots", SLOT_GRIDS)],
@@ -157,14 +194,18 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
       provenance: { source: "google-maps", realPricing: true },
     });
   }
+  if (dropped)
+    console.info(`[date-genie] dropped ${dropped} Maps venues outside the search radius`);
   return out;
 }
 
 async function searchEvents(q: EventQuery): Promise<EventItem[]> {
-  const raw = await fetchPlaces(q.at, "events", q.category ?? "");
+  const raw = await fetchPlaces(q.at, "events", q.category ?? "", q.radiusKm);
   const out: EventItem[] = [];
   for (const p of raw) {
     if (!p.name) continue;
+    const at = coords(p, q.at);
+    if (!withinRadius(at, q.at, q.radiusKm)) continue;
     const id = `gmaps_ev_${p.name.toLowerCase().replace(/\W+/g, "_")}`;
     const category = (["film", "theater", "music", "comedy", "class"] as const).includes(
       p.category as never,
@@ -178,7 +219,7 @@ async function searchEvents(q: EventQuery): Promise<EventItem[]> {
       category,
       venue: p.name,
       neighborhood: p.address?.split(",")[1]?.trim() ?? "nearby",
-      at: coords(p, q.at),
+      at,
       start,
       durationMinutes: category === "film" ? 110 : category === "theater" ? 135 : 120,
       pricePerTicket: Math.max(0, Math.round(p.approxTicket ?? 25)),
@@ -197,8 +238,17 @@ export const gmapsAdapter: SourceAdapter = {
   kind: "api-adapter",
   attribution: "Ratings, review counts and price bands from Google Maps, grounded via Gemini",
   provides: ["restaurants", "events"],
-  // Flipped on at startup when the Worker reports a Gemini key is configured.
-  available: false,
+  /**
+   * On by default, rather than waiting to be switched on.
+   *
+   * The previous version flipped this flag after fetching /api/sources, which
+   * introduced a race: any search issued before that resolved silently ran
+   * without Google Maps, and the app quietly degraded to guessed prices while
+   * reporting itself healthy. The endpoint already answers `no_key` cheaply
+   * when no key is configured, so asking and being told no is both simpler and
+   * more honest than a flag that might not have been set yet.
+   */
+  available: true,
   needsKey: true,
   searchRestaurants,
   searchEvents,

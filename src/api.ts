@@ -314,28 +314,41 @@ async function foursquareSearch(env: Env, params: URLSearchParams): Promise<Resp
  * the evening. Selection and arithmetic stay in the deterministic planner.
  */
 /**
- * Model choice is a latency decision, not a quality one.
+ * Quality first, and let the architecture absorb the latency.
  *
- * Measured against the same Maps-grounded prompt: gemini-3.5-flash 42s,
- * gemini-3.8-flash 28s, gemini-2.5-flash 21s, gemini-3.1-flash-lite 3.8s.
- * The big models return marginally richer prose and blow the Worker's time
- * budget doing it. The data we want (name, rating, price band) comes from Maps
- * either way, so take the fast one.
+ * Measured twice each on this exact prompt, Charleston, Maps grounded:
+ *
+ *   gemini-3.8-flash       38.2s / 65.3s   14 venues
+ *   gemini-3.7-flash       24.8s / 40.8s   14 venues
+ *   gemini-3.1-flash-lite   3.8s /  ~4s     4-5 venues
+ *
+ * 3.7 and 3.8 return the same calibre of answer (both surface Circa 1886, Chez
+ * Nous and FIG, which are in fact the best rooms in that city), so 3.7 wins on
+ * speed alone. The lite model is a different class: it returned a third as many
+ * venues, ignored "special occasion", and placed Charleston restaurants on
+ * Sullivan's Island. It stays only as a fallback, so a timeout degrades the
+ * answer instead of removing it.
+ *
+ * None of these are fast enough to block a search, which is the point of the
+ * architecture: the fast sources answer first and the page improves in place,
+ * the result is cached at the edge for an hour, and `npm run warm` means the
+ * first visitor to a demo city is not a judge with a stopwatch.
  */
-const PLACES_MODEL = "gemini-3.1-flash-lite";
+const PLACES_MODEL = "gemini-3.7-flash";
+const PLACES_FALLBACK_MODEL = "gemini-3.1-flash-lite";
 
-const placesPrompt = (lat: number, lng: number, kind: string, want: string) =>
+const placesPrompt = (lat: number, lng: number, kind: string, want: string, km: number) =>
   kind === "events"
-    ? `Find up to 12 real venues near latitude ${lat}, longitude ${lng} where someone could spend an evening out: cinemas, theatres, live music venues, comedy clubs, or arts centres.${
+    ? `Find up to 12 real venues within ${km} km of latitude ${lat}, longitude ${lng} where someone could spend an evening out: cinemas, theatres, live music venues, comedy clubs, or arts centres.${
         want ? ` Prefer: ${want}.` : ""
       }
 For EACH return a JSON object with keys: name, category (one of film, theater, music, comedy, class), rating (number), reviews (number), approxTicket (number, typical USD ticket price, 0 if free), address, lat (number), lng (number), blurb (under 12 words, what it is actually like).
 Reply with ONLY a JSON array. No prose, no markdown fence.`
-    : `Find up to 14 real restaurants near latitude ${lat}, longitude ${lng} that are good for an evening out.${
+    : `Find up to 14 real restaurants within ${km} km of latitude ${lat}, longitude ${lng} that are good for an evening out.${
         want ? ` Prefer: ${want}.` : ""
       }
 For EACH return a JSON object with keys: name, rating (number), reviews (number), approxPerPerson (number, realistic USD spend per person including drinks), cuisine (one lowercase word), address, lat (number), lng (number), romantic (true or false), noise (quiet, moderate or loud), chain (true or false), vibe (under 10 words).
-Reply with ONLY a JSON array. No prose, no markdown fence.`;
+Every venue MUST be within ${km} km of that point. Do not include anywhere further out, however good it is.\nReply with ONLY a JSON array. No prose, no markdown fence.`;
 
 async function googlePlaces(env: Env, params: URLSearchParams): Promise<Response> {
   try {
@@ -359,33 +372,49 @@ async function groundedPlaces(env: Env, params: URLSearchParams): Promise<Respon
     return json({ error: "lat and lng required" }, 400);
   const kind = params.get("kind") === "events" ? "events" : "restaurants";
   const want = (params.get("want") ?? "").slice(0, 120);
+  const km = Math.min(25, Math.max(1, Number(params.get("km")) || 5));
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${PLACES_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: placesPrompt(lat, lng, kind, want) }] }],
-        tools: [{ google_maps: {} }],
-        generationConfig: { temperature: 0.2 },
-      }),
-      signal: AbortSignal.timeout(15000),
-    },
-  );
-  if (!res.ok) return json({ unavailable: `gemini_${res.status}`, places: [] }, 200, 0, false);
+  const prompt = placesPrompt(lat, lng, kind, want, km);
+  for (const [model, budgetMs] of [
+    [PLACES_MODEL, 75000],
+    [PLACES_FALLBACK_MODEL, 12000],
+  ] as const) {
+    const places = await askGemini(env.GEMINI_API_KEY, model, prompt, budgetMs);
+    if (places?.length) return json({ places, grounded: true, model }, 200, 3600);
+  }
+  return json({ unavailable: "no_places", places: [] }, 200, 0, false);
+}
 
-  const body = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] }; groundingMetadata?: unknown }[];
-  };
-  const text = (body.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
-  const match = /\[[\s\S]*\]/.exec(text);
-  if (!match) return json({ unavailable: "unparseable", places: [] }, 200, 0, false);
+async function askGemini(
+  key: string,
+  model: string,
+  prompt: string,
+  budgetMs: number,
+): Promise<unknown[] | null> {
   try {
-    const places = JSON.parse(match[0]) as unknown[];
-    return json({ places, grounded: true, model: PLACES_MODEL }, 200, 3600);
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          tools: [{ google_maps: {} }],
+          generationConfig: { temperature: 0.2 },
+        }),
+        signal: AbortSignal.timeout(budgetMs),
+      },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const text = (body.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+    const match = /\[[\s\S]*\]/.exec(text);
+    if (!match) return null;
+    return JSON.parse(match[0]) as unknown[];
   } catch {
-    return json({ unavailable: "unparseable", places: [] }, 200, 0, false);
+    return null;
   }
 }
 

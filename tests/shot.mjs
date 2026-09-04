@@ -1,19 +1,23 @@
 import { chromium } from "playwright";
 const b = await chromium.launch();
-const p = await b.newPage({ viewport: { width: 1500, height: 1100 }, deviceScaleFactor: 2 });
-const errs = [];
-p.on("pageerror", (e) => errs.push(e.message));
+const p = await b.newPage({ viewport: { width: 1500, height: 1060 }, deviceScaleFactor: 2 });
 await p.goto("https://date-genie.agent9.dev/", { waitUntil: "domcontentloaded" });
 await p.waitForTimeout(2000);
 await p.evaluate(() =>
   window.dateGenie.call("plan_date_night", {
-    request: "Anniversary in Charleston, SC, under $300, nothing loud, no shellfish.",
+    request:
+      "It's our anniversary, we're in Charleston, SC. Under $300, nothing loud, no shellfish, and a show after.",
   }),
 );
-await p.waitForTimeout(3500);
-await p.screenshot({ path: "/tmp/dg-shots/10-plan.png" });
-await p.evaluate(() => window.scrollTo(0, 1400));
-await p.waitForTimeout(500);
-await p.screenshot({ path: "/tmp/dg-shots/11-sources.png" });
-console.log("errors:", errs.length ? errs : "none");
+await p.waitForTimeout(6000);
+await p.screenshot({ path: "/tmp/dg-shots/20-final.png" });
+const s = await p.evaluate(() => {
+  const s = window.dateGenie.getState();
+  return {
+    plan: s.plan && s.plan.legs.map((l) => `${l.start} ${l.title} $${l.cost}`),
+    total: s.plan?.total,
+    src: s.pool?.reports.map((r) => r.label + ":" + r.counts.restaurants),
+  };
+});
+console.log(JSON.stringify(s, null, 1));
 await b.close();

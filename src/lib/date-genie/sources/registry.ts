@@ -90,10 +90,11 @@ export async function refreshKeyedAvailability(): Promise<Record<string, boolean
     if (!res.ok) return {};
     const body = (await res.json()) as { sources?: { id: string; available: boolean }[] };
     const map = Object.fromEntries((body.sources ?? []).map((s) => [s.id, s.available]));
-    // The client cannot see a key, so the Worker is the only honest authority
-    // on whether a keyed adapter can actually be used.
+    // Only ever switch an adapter OFF here. Switching one on was a race: a
+    // search issued before this resolved ran without it. Adapters that can
+    // self-report an absent key start enabled instead.
     for (const adapter of ACTIVE_ADAPTERS) {
-      if (adapter.needsKey) adapter.available = map[adapter.id] === true;
+      if (adapter.needsKey && map[adapter.id] === false) adapter.available = false;
     }
     return map;
   } catch {
