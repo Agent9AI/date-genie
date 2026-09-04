@@ -45,7 +45,11 @@ for (const [name, lat, lng] of CITIES) {
   }
   // Prime each intent bucket, so a real request is a cache hit whatever kind of
   // night someone asks for.
-  const WANTS = ["", "special occasion, somewhere memorable, higher end", "good value, casual, inexpensive"];
+  const WANTS = [
+    "",
+    "special occasion, somewhere memorable, higher end",
+    "good value, casual, inexpensive",
+  ];
   for (const want of WANTS) {
     for (const kind of ["restaurants", "events"]) {
       results.push(

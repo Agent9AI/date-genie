@@ -118,7 +118,6 @@ async function fetchPlaces(
   }
 }
 
-
 const coords = (p: RawPlace, fallback: LatLng): LatLng =>
   Number.isFinite(p.lat) && Number.isFinite(p.lng) ? { lat: p.lat!, lng: p.lng! } : fallback;
 
@@ -147,7 +146,14 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
   // "anniversary in Charleston" for the next hour, and `npm run warm` can prime
   // the buckets ahead of time. Fine-grained filtering still happens locally,
   // where it is free.
-  const profile = q.targetPerPerson === undefined ? "standard" : q.targetPerPerson >= 65 ? "special" : q.targetPerPerson <= 25 ? "cheap" : "standard";
+  const profile =
+    q.targetPerPerson === undefined
+      ? "standard"
+      : q.targetPerPerson >= 65
+        ? "special"
+        : q.targetPerPerson <= 25
+          ? "cheap"
+          : "standard";
   const want = [
     q.cuisine,
     ...(q.dietary ?? []),

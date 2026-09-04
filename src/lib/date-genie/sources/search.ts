@@ -27,7 +27,8 @@ export type SearchInput = {
   at: LatLng;
   radiusKm: number;
   restaurants: Omit<RestaurantQuery, "at" | "radiusKm">;
-  events: Omit<EventQuery, "at" | "radiusKm">;
+  /** `skip` lets an enrichment pass buy only the category it actually needs. */
+  events: Omit<EventQuery, "at" | "radiusKm"> & { skip?: boolean };
 };
 
 export type SearchOutcome = CandidatePool & {
@@ -104,7 +105,9 @@ async function round(
                 : undefined,
             )
           : Promise.resolve([] as Restaurant[]),
-        attempt(searchE ? () => searchE({ ...area, ...input.events }) : undefined),
+        input.events.skip
+          ? Promise.resolve([] as EventItem[])
+          : attempt(searchE ? () => searchE({ ...area, ...input.events }) : undefined),
         hasCategory
           ? attempt(
               searchE
@@ -170,7 +173,14 @@ export const richSourcesAvailable = () => richAdapters().length > 0;
 export async function enrich(pool: SearchOutcome, input: SearchInput): Promise<SearchOutcome> {
   const rich = richAdapters();
   if (!rich.length) return pool;
-  const extra = await round(input, rich);
+  // Each grounded category costs about 25 seconds. The free sources already
+  // return plenty of venues in most cities, so only pay for events when they
+  // did not, and always pay for restaurants, where real prices decide the plan.
+  const needEvents = pool.events.length < 8;
+  const extra = await round(
+    needEvents ? input : { ...input, events: { ...input.events, skip: true } },
+    rich,
+  );
   if (!extra.restaurants.length && !extra.events.length) return pool;
   return {
     ...pool,

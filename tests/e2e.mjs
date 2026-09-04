@@ -30,11 +30,12 @@ console.log("--- get_date_context ---\n" + ctx);
 
 // 3. Run the whole flow via the button
 await page.getByRole("button", { name: /grant the wish/i }).click();
-await page.waitForTimeout(3200);
+await page.waitForFunction(() => window.dateGenie.getState().plan !== null, { timeout: 90000 });
+await page.waitForTimeout(600);
 await page.screenshot({ path: `${shots}/02-planned.png` });
 
 // 4. The approval gate must appear and must be blocking
-await page.waitForSelector('[role="dialog"]', { timeout: 15000 });
+await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
 await page.screenshot({ path: `${shots}/03-approval.png` });
 const toolsDuringApproval = await page.evaluate(() =>
   window.dateGenie.listTools().map((t) => t.name),

@@ -274,16 +274,22 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
   };
   const input = { at: place.at, radiusKm: 4, restaurants: restaurantQuery, events: eventQuery };
 
-  // One search, one enrichment, one write.
+  // Fast answer now, better answer shortly.
   //
-  // This used to run a background enrichment that re-planned whenever it landed,
-  // plus a rescue pass when the fast sources came up short. Three async paths
-  // writing to one store raced each other, and a stale pool could overwrite a
-  // good one. The endpoint is cached at the edge for an hour and `npm run warm`
-  // primes the demo cities, so the honest simple version costs a few seconds
-  // once per city and is correct every time.
+  // The grounded Maps lookup takes about 25 seconds on a cold city and there
+  // are too many cuisine and occasion combinations to pre-warm them all, so
+  // blocking on it meant a minute of blank screen. Instead the fast sources
+  // answer, the plan appears, and the rich sources land afterwards and improve
+  // it in place.
+  //
+  // An earlier attempt at this raced: several async paths wrote to one store
+  // and a stale pool could overwrite a good one. The generation counter fixes
+  // that properly. Every search takes a ticket, and a late result is discarded
+  // unless it is still the current one.
+  const generation = ++searchGeneration;
   const fast = await searchWithWidening(input);
-  const pool = richSourcesAvailable() ? await enrich(fast, input) : fast;
+  if (generation !== searchGeneration) return;
+  const pool = fast;
 
   if (pool.dropped.length) {
     set({ notice: `To find anything at all I had to drop ${pool.dropped.join("; and ")}.` });
@@ -303,6 +309,10 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
   }
 
   applyPlan(merged, pool);
+
+  // Off it goes. Nobody waits for this.
+  if (richSourcesAvailable())
+    enrichmentInFlight = enrichInBackground(generation, merged, input, fast);
 
   // Still nothing bookable, and we were filtering on what they asked for? The
   // filters are the likeliest culprit, so try once without them and be honest
@@ -349,9 +359,46 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
   }
 }
 
-/** Kept so callers need not care whether enrichment is inline or deferred. */
-export async function awaitEnrichment(): Promise<void> {
-  return;
+let searchGeneration = 0;
+let enrichmentInFlight: Promise<void> | null = null;
+
+/**
+ * Improve the plan once the slower sources answer, but only if this is still
+ * the search the user is looking at, and only if they have not started
+ * approving or booking. A better restaurant is not worth moving the ground
+ * under someone's thumb.
+ */
+async function enrichInBackground(
+  generation: number,
+  c: Constraints,
+  input: Parameters<typeof enrich>[1],
+  fast: Awaited<ReturnType<typeof searchWithWidening>>,
+): Promise<void> {
+  const rich = await enrich(fast, input);
+  if (generation !== searchGeneration) return;
+  const s = getState();
+  if (s.approval.status !== "idle" || s.booking) return;
+  if (
+    rich.restaurants.length <= fast.restaurants.length &&
+    rich.events.length <= fast.events.length
+  )
+    return;
+  applyPlan(s.constraints, rich);
+}
+
+/**
+ * Wait for the richer sources, but not forever.
+ *
+ * A person watching the page gets the improvement whenever it lands. An agent
+ * asked a question and needs an answer, so it waits a reasonable beat and then
+ * reports what it has; the page keeps improving behind it either way.
+ */
+// Short on purpose. A warm city resolves in milliseconds, so this only bites
+// on a cold one, where returning a good plan now and improving it a moment
+// later beats making anyone stare at nothing.
+export async function awaitEnrichment(maxMs = 8000): Promise<void> {
+  if (!enrichmentInFlight) return;
+  await Promise.race([enrichmentInFlight, new Promise((r) => setTimeout(r, maxMs))]);
 }
 
 /** Re-plan against the results already in hand. Used when a constraint changes
