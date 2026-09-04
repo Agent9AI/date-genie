@@ -33,7 +33,9 @@ Then one button books all three at once, and the tool call that does it **cannot
 
 ## Three layers
 
-**1. Search.** Adapters, queried at the moment you ask, with your filters compiled into the upstream query. Asking for vegan food issues a `diet:vegan` search rather than downloading a city and discarding most of it. There is no stored inventory anywhere in this repo: no seed dataset, no cached city, no home town. `data.ts` contains types and geometry and nothing else.
+**1. Search.** Two adapters, queried at the moment you ask, with your filters compiled into the upstream query. OpenStreetMap gives breadth and exact coordinates in about a second. Google Maps, grounded through Gemini, gives real ratings, real review counts and real price bands in about four. Asking for vegan food issues a `diet:vegan` search rather than downloading a city and discarding most of it.
+
+There is no stored inventory anywhere in this repo: no seed dataset, no cached city, no home town. `data.ts` contains types and geometry and nothing else.
 
 **2. Understanding and ranking.** Cloudflare Workers AI (Llama 3.3 70B, no API key, running on the same Worker that serves the page) turns your sentence into constraints. Then a deterministic solver does exhaustive constraint satisfaction over every dinner × event × parking combination, typically three to seven thousand of them.
 
@@ -98,18 +100,24 @@ Tool text is written for a model to read, with the machine payload alongside in 
 
 Stated plainly rather than buried, because it is the first thing a careful person asks.
 
-**Real, fetched live from [OpenStreetMap](https://www.openstreetmap.org/) via Overpass and Nominatim, no API key, free:**
+**Real, from [OpenStreetMap](https://www.openstreetmap.org/) (Overpass and Nominatim, keyless and free):**
 
 - Restaurants, cinemas, theatres, nightclubs, arts centres and parking facilities around any place you name, anywhere in the world
-- Their names, coordinates, cuisine tags, `diet:vegan` and `diet:vegetarian` tags, brand (so chains can be spotted), and whether a lot charges a fee or is covered
-- **Every walk and drive time is computed from those real coordinates** by haversine at a city walking pace. Nothing is a hardcoded pair, so the planner reasons about combinations nobody enumerated
+- Names, coordinates, cuisine tags, `diet:vegan` and `diet:vegetarian` tags, brand (so chains can be spotted), and whether a lot charges a fee or is covered
+- **Every walk and drive time is computed from those coordinates** by haversine at a city walking pace. Nothing is a hardcoded pair, so the planner reasons about combinations nobody enumerated
 
-**Simulated, because no free open dataset carries it:**
+**Real, from Google Maps (grounded through Gemini):**
 
-- Prices, ratings, table availability, showtimes and seats. Derived deterministically from each venue's OSM id, so a restaurant looks identical on every reload rather than shuffling between visits
+- Star ratings and review counts
+- Price bands, as a realistic spend per person
+- Addresses, and a read on whether somewhere suits the occasion
+
+**Still simulated, because neither source publishes it:**
+
+- Table availability and showtimes. Derived deterministically from the venue id, so a restaurant looks identical on every reload rather than shuffling between visits
 - Reservations. Confirmation codes are generated locally. No card is charged and no restaurant is contacted
 
-The simulated star rating is deliberately given a **small weight** in ranking. Letting fabricated stars outvote what the human actually said is how you end up recommending a $102 evening to someone who set aside $300 for their anniversary.
+Every venue carries a `provenance` field recording which source it came from and whether its pricing is real. When both sources return the same place, the copy with real pricing wins the merge, and the planner scores real numbers above derived ones. Where a number is still derived, the UI and the tool responses say so.
 
 ## What it does when it cannot help
 
@@ -153,8 +161,9 @@ src/lib/date-genie/
   sources/
     types.ts         the adapter contract
     registry.ts      live adapters, and the ones that have not shipped WebMCP
-    osm.ts           OpenStreetMap adapter
-    search.ts        parallel fan-out, dedupe, targeted widening
+    osm.ts           OpenStreetMap adapter: breadth, coordinates, diet tags
+    gmaps.ts         Google Maps via Gemini: real ratings and prices
+    search.ts        fan-out, dedupe by provenance, progressive enrichment
     geocode.ts       place names and browser geolocation
 src/api.ts           Worker-side adapter endpoints and edge caching
 src/components/date-genie/panels.tsx
@@ -162,7 +171,9 @@ src/routes/index.tsx
 tests/               Playwright suites that run against production
 ```
 
-Stack: TanStack Start, React 19, Tailwind 4, deployed as a Cloudflare Worker with Workers AI.
+Stack: TanStack Start, React 19, Tailwind 4, deployed as a Cloudflare Worker with Workers AI and Gemini.
+
+**A note on speed.** The fast sources answer first and the page fills in; the slower, richer source lands a moment later and the plan improves in place. That is also a rather good demonstration of what a shared human-and-agent surface looks like: you watch the answer get better. `npm run warm` primes the edge cache for the demo cities so the first visitor is never a judge with a stopwatch.
 
 ## Local development
 
@@ -181,8 +192,8 @@ Workers AI and the adapter endpoints only exist in the deployed Worker, so `npm 
 ## Limitations, honestly
 
 - Events are real venues with **simulated showtimes**. A keyed Ticketmaster adapter is written and waiting for a key
-- Prices and ratings are simulated. A keyed Yelp or Foursquare adapter is written and waiting for a key
 - Bookings are simulated end to end
+- Overpass is a free shared service and it sheds load. Queries are spread across three mirrors, failures are never cached, and Google Maps is awaited as a fallback when OpenStreetMap comes back empty, but a cold search in a new city can still take a few seconds
 - Only one person's agent participates. Two partners negotiating one plan through two agents is the obvious next thing and is not built
 - OpenStreetMap tagging quality varies. In some towns `amenity=restaurant` includes a popcorn shop
 

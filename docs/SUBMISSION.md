@@ -43,13 +43,13 @@ One sentence in, one bookable evening out, anywhere in the world. Dinner, someth
 
 Three layers.
 
-**Search.** A source adapter contract, queried at the moment you ask, with your filters compiled into the upstream query. Asking for vegan food issues a `diet:vegan` search rather than downloading a city and discarding most of it. There is no stored inventory anywhere in the repo: no seed dataset, no cached city, no home town.
+**Search.** A source adapter contract, queried at the moment you ask, with your filters compiled into the upstream query. OpenStreetMap gives breadth and exact coordinates in about a second; Google Maps, grounded through Gemini, gives real ratings and real price bands in about four. The fast source answers first and the page fills in, then the rich one lands and the plan improves in place. There is no stored inventory anywhere in the repo: no seed dataset, no cached city, no home town.
 
 **Understanding and ranking.** Cloudflare Workers AI (Llama 3.3 70B, no API key, on the same Worker that serves the page) turns the sentence into constraints. A deterministic solver then does the constraint satisfaction. The split is the whole design: the model handles language, the solver handles money and time. The model never picks a venue, never computes a total, and any number it returns is discarded unless those digits appear in what the user actually typed.
 
 **Execution.** WebMCP tools with the approval gate described above.
 
-Deployed as a Cloudflare Worker. Restaurants, venues and parking come live from OpenStreetMap via Overpass, geocoding from Nominatim, both free and keyless, proxied through the Worker with an edge cache keyed on the exact query.
+Deployed as a Cloudflare Worker. Every venue carries provenance recording which source it came from and whether its numbers are real, and when both sources return the same place the one with real pricing wins the merge.
 
 ## Challenges we ran into
 
@@ -85,4 +85,4 @@ And the list in `sources/registry.ts` of providers with no WebMCP surface, each 
 
 ## Built with
 
-TanStack Start, React 19, Tailwind 4, Cloudflare Workers, Cloudflare Workers AI (Llama 3.3 70B), OpenStreetMap Overpass, Nominatim, Playwright, TypeScript, WebMCP.
+TanStack Start, React 19, Tailwind 4, Cloudflare Workers, Cloudflare Workers AI (Llama 3.3 70B), Google Gemini with Maps grounding, OpenStreetMap Overpass, Nominatim, Playwright, TypeScript, WebMCP.

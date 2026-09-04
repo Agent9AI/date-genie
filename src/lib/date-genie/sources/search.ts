@@ -73,7 +73,10 @@ const ENOUGH = 6;
  * One round of fan-out. Every adapter, every category, and the relaxed variant
  * of the restaurant query, all in flight together.
  */
-async function round(input: SearchInput, adapters = ACTIVE_ADAPTERS.filter((a) => a.available)): Promise<SearchOutcome> {
+async function round(
+  input: SearchInput,
+  adapters = ACTIVE_ADAPTERS.filter((a) => a.available),
+): Promise<SearchOutcome> {
   const area = { at: input.at, radiusKm: input.radiusKm };
   const reports: SourceReport[] = [];
   const dropped: string[] = [];

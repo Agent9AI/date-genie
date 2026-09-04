@@ -35,13 +35,44 @@ type RawPlace = {
 };
 
 const GLYPHS: Record<string, string> = {
-  sushi: "🍣", japanese: "🍜", ramen: "🍜", noodles: "🍜", korean: "🔥", barbecue: "🔥", bbq: "🔥",
-  seafood: "🦪", steakhouse: "🥩", steak: "🥩", french: "🥖", italian: "🍝", pizza: "🍕",
-  mexican: "🌵", peruvian: "🌶️", thai: "🍲", vietnamese: "🍜", chinese: "🥟", indian: "🍛",
-  mediterranean: "🫒", greek: "🫒", lebanese: "🧆", ethiopian: "🫓", spanish: "🥘",
-  american: "🍽️", southern: "🍗", burger: "🍔", cafe: "☕", vegan: "🌿", vegetarian: "🌿",
+  sushi: "🍣",
+  japanese: "🍜",
+  ramen: "🍜",
+  noodles: "🍜",
+  korean: "🔥",
+  barbecue: "🔥",
+  bbq: "🔥",
+  seafood: "🦪",
+  steakhouse: "🥩",
+  steak: "🥩",
+  french: "🥖",
+  italian: "🍝",
+  pizza: "🍕",
+  mexican: "🌵",
+  peruvian: "🌶️",
+  thai: "🍲",
+  vietnamese: "🍜",
+  chinese: "🥟",
+  indian: "🍛",
+  mediterranean: "🫒",
+  greek: "🫒",
+  lebanese: "🧆",
+  ethiopian: "🫓",
+  spanish: "🥘",
+  american: "🍽️",
+  southern: "🍗",
+  burger: "🍔",
+  cafe: "☕",
+  vegan: "🌿",
+  vegetarian: "🌿",
 };
-const EVENT_GLYPHS: Record<string, string> = { film: "🎞️", theater: "🎭", music: "🎷", comedy: "🎤", class: "🏺" };
+const EVENT_GLYPHS: Record<string, string> = {
+  film: "🎞️",
+  theater: "🎭",
+  music: "🎷",
+  comedy: "🎤",
+  class: "🏺",
+};
 
 /** Table times are the one thing Maps cannot tell us, so they stay derived. */
 function hash(s: string): number {
@@ -56,10 +87,16 @@ const SLOT_GRIDS = [
   ["19:00", "19:30", "20:15", "21:00"],
 ] as const;
 const START_TIMES = ["19:00", "19:30", "20:00", "20:30", "21:00"] as const;
-const pick = <T,>(id: string, ch: string, xs: readonly T[]): T => xs[hash(`${id}:${ch}`) % xs.length]!;
+const pick = <T>(id: string, ch: string, xs: readonly T[]): T =>
+  xs[hash(`${id}:${ch}`) % xs.length]!;
 
 // Its own budget, so a slow enrichment degrades the answer instead of the app.
-async function fetchPlaces(at: LatLng, kind: "restaurants" | "events", want: string, timeoutMs = 9000): Promise<RawPlace[]> {
+async function fetchPlaces(
+  at: LatLng,
+  kind: "restaurants" | "events",
+  want: string,
+  timeoutMs = 9000,
+): Promise<RawPlace[]> {
   try {
     const url = `/api/places?lat=${at.lat.toFixed(5)}&lng=${at.lng.toFixed(5)}&kind=${kind}${want ? `&want=${encodeURIComponent(want)}` : ""}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
@@ -96,7 +133,11 @@ async function searchRestaurants(q: RestaurantQuery): Promise<Restaurant[]> {
     const id = `gmaps_${p.name.toLowerCase().replace(/\W+/g, "_")}`;
     const cuisine = (p.cuisine ?? "restaurant").toLowerCase();
     const price = Math.max(8, Math.round(p.approxPerPerson ?? 40));
-    const tags = [cuisine, ...(p.romantic ? ["romantic", "date-night"] : []), ...(p.chain ? ["chain"] : [])];
+    const tags = [
+      cuisine,
+      ...(p.romantic ? ["romantic", "date-night"] : []),
+      ...(p.chain ? ["chain"] : []),
+    ];
     if (price <= 24) tags.push("value", "cheap-eats");
     if (price >= 70) tags.push("special-occasion");
     for (const d of q.dietary ?? []) tags.push(`${d.toLowerCase()}-friendly`);
@@ -125,7 +166,9 @@ async function searchEvents(q: EventQuery): Promise<EventItem[]> {
   for (const p of raw) {
     if (!p.name) continue;
     const id = `gmaps_ev_${p.name.toLowerCase().replace(/\W+/g, "_")}`;
-    const category = (["film", "theater", "music", "comedy", "class"] as const).includes(p.category as never)
+    const category = (["film", "theater", "music", "comedy", "class"] as const).includes(
+      p.category as never,
+    )
       ? (p.category as EventItem["category"])
       : "music";
     const start = pick(id, "start", START_TIMES);

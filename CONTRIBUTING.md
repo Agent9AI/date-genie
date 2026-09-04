@@ -33,6 +33,8 @@ export const myAdapter: SourceAdapter = {
 
 Then add it to `ACTIVE_ADAPTERS` in `sources/registry.ts`. That is the whole integration. `search.ts` will fan out to it in parallel, dedupe its results against the other sources, and report its latency in the UI and through the `list_sources` tool.
 
+`sources/gmaps.ts` is the worked example of a keyed adapter: it calls `/api/places`, marks itself `available: false` until the Worker confirms a key exists, sets `provenance.realPricing` on what it returns, and gives itself a short timeout so a slow enrichment degrades the answer instead of the app.
+
 **If your provider needs a key**, add an endpoint in `src/api.ts` and call it from the adapter. Keys live in the Worker and must never reach the client bundle. `/api/yelp`, `/api/events` and `/api/foursquare` are already written as working examples; they report themselves unavailable until a key is configured, which is exactly the behaviour a new keyed adapter should have.
 
 ## Adapters we would especially like
@@ -43,7 +45,7 @@ Then add it to `ACTIVE_ADAPTERS` in `sources/registry.ts`. That is the whole int
 
 **Never store a place.** No seed datasets, no per-city caches in the page, no default home town. Every search is issued fresh with the caller's filters. The only cache is the Worker's edge cache, keyed by the exact query string. This is the constraint the whole design hangs off; a PR that reintroduces a bundled city will be sent back.
 
-**Be honest about what is real.** If your adapter synthesizes a value the provider does not supply, say so in the code comment, in the tool text that returns it, and in the UI. Look at how `sources/osm.ts` labels simulated prices. Users and agents both deserve to know how much to trust a number.
+**Be honest about what is real.** Set `provenance` on everything you return. If your adapter synthesizes a value the provider does not supply, say so in the code comment, in the tool text that returns it, and in the UI. Look at how `sources/osm.ts` labels simulated prices and how `sources/gmaps.ts` marks real ones. Users and agents both deserve to know how much to trust a number.
 
 **Keep the model out of the arithmetic.** Language understanding can use an LLM. Selection, scoring and anything that ends up on the bill stays deterministic and auditable.
 

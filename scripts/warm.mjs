@@ -49,5 +49,7 @@ for (const [name, lat, lng] of CITIES) {
       .then((b) => (b.places ?? []).length)
       .catch(() => "fail"),
   );
-  console.log(`${name.padEnd(20)} osm=[${results.slice(0, 3).join(", ")}] maps=${results[3]}  ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  console.log(
+    `${name.padEnd(20)} osm=[${results.slice(0, 3).join(", ")}] maps=${results[3]}  ${((Date.now() - started) / 1000).toFixed(1)}s`,
+  );
 }

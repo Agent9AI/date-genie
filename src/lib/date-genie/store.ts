@@ -289,11 +289,18 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
         avoid: merged.avoid,
         earliest: merged.earliest,
         party: merged.party,
-        targetPerPerson: Math.max(12, Math.round((merged.budget * merged.spendTarget * 0.62) / Math.max(1, merged.party))),
+        targetPerPerson: Math.max(
+          12,
+          Math.round((merged.budget * merged.spendTarget * 0.62) / Math.max(1, merged.party)),
+        ),
         ...(merged.spendTarget >= 0.8 ? { occasion: "special occasion" } : {}),
         ...(merged.noisePreference === "quiet" ? { quiet: true } : {}),
       },
-      events: { ...(activity ? { category: activity } : {}), earliest: merged.earliest, latestEnd: merged.latestEnd },
+      events: {
+        ...(activity ? { category: activity } : {}),
+        earliest: merged.earliest,
+        latestEnd: merged.latestEnd,
+      },
     });
     if (rescued.restaurants.length > pool.restaurants.length) pool = rescued;
   }
@@ -384,7 +391,12 @@ export async function awaitEnrichment(maxMs = 6000): Promise<void> {
  */
 async function enrichCurrent(
   c: Constraints,
-  ctx: { at: { lat: number; lng: number }; radiusKm: number; cuisine?: string | undefined; activity?: string | undefined },
+  ctx: {
+    at: { lat: number; lng: number };
+    radiusKm: number;
+    cuisine?: string | undefined;
+    activity?: string | undefined;
+  },
 ): Promise<void> {
   const basePool = getState().pool;
   if (!basePool) return;
@@ -401,17 +413,27 @@ async function enrichCurrent(
         party: c.party,
         // What a good answer should cost per head, so the rich source returns
         // the right kind of place instead of the cheapest thing nearby.
-        targetPerPerson: Math.max(12, Math.round((c.budget * c.spendTarget * 0.62) / Math.max(1, c.party))),
+        targetPerPerson: Math.max(
+          12,
+          Math.round((c.budget * c.spendTarget * 0.62) / Math.max(1, c.party)),
+        ),
         ...(c.spendTarget >= 0.8 ? { occasion: "special occasion" } : {}),
         ...(c.noisePreference === "quiet" ? { quiet: true } : {}),
       },
-      events: { ...(ctx.activity ? { category: ctx.activity } : {}), earliest: c.earliest, latestEnd: c.latestEnd },
+      events: {
+        ...(ctx.activity ? { category: ctx.activity } : {}),
+        earliest: c.earliest,
+        latestEnd: c.latestEnd,
+      },
     });
     // Only disturb the screen if the enrichment genuinely added something, and
     // never once a human has approved or booked.
     const s = getState();
     if (s.approval.status !== "idle" || s.booking) return;
-    if (better.restaurants.length > (basePool.restaurants.length ?? 0) || better.events.length > (basePool.events.length ?? 0)) {
+    if (
+      better.restaurants.length > (basePool.restaurants.length ?? 0) ||
+      better.events.length > (basePool.events.length ?? 0)
+    ) {
       applyPlan(getState().constraints, better as never);
     }
   } finally {

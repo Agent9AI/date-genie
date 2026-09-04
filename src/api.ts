@@ -270,7 +270,8 @@ async function ticketmasterSearch(env: Env, params: URLSearchParams): Promise<Re
     if (v) url.searchParams.set(k, v);
   }
   const res = await fetch(url);
-  if (!res.ok) return json({ unavailable: `ticketmaster_${res.status}`, events: [] }, 200, 0, false);
+  if (!res.ok)
+    return json({ unavailable: `ticketmaster_${res.status}`, events: [] }, 200, 0, false);
   return json(await res.json(), 200, 900);
 }
 
@@ -341,7 +342,12 @@ async function googlePlaces(env: Env, params: URLSearchParams): Promise<Response
     return await groundedPlaces(env, params);
   } catch (error) {
     // A slow or failed enrichment must never take the search down with it.
-    return json({ unavailable: error instanceof Error ? error.name : "failed", places: [] }, 200, 0, false);
+    return json(
+      { unavailable: error instanceof Error ? error.name : "failed", places: [] },
+      200,
+      0,
+      false,
+    );
   }
 }
 
@@ -349,7 +355,8 @@ async function groundedPlaces(env: Env, params: URLSearchParams): Promise<Respon
   if (!env.GEMINI_API_KEY) return json({ unavailable: "no_key", places: [] }, 200, 60);
   const lat = Number(params.get("lat"));
   const lng = Number(params.get("lng"));
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return json({ error: "lat and lng required" }, 400);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng))
+    return json({ error: "lat and lng required" }, 400);
   const kind = params.get("kind") === "events" ? "events" : "restaurants";
   const want = (params.get("want") ?? "").slice(0, 120);
 
