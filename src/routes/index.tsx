@@ -14,6 +14,7 @@ import {
 } from "@/components/date-genie/panels";
 import { SAMPLE_REQUESTS, runDemoAgent } from "@/lib/date-genie/demo-agent";
 import * as store from "@/lib/date-genie/store";
+import { refreshKeyedAvailability } from "@/lib/date-genie/sources/registry";
 import { bindWebMcp } from "@/lib/date-genie/webmcp";
 
 export const Route = createFileRoute("/")({
@@ -88,6 +89,8 @@ function DateGenie() {
 
   useEffect(() => {
     store.hydrate();
+    // Ask the Worker which keyed adapters are configured before the first search.
+    void refreshKeyedAvailability();
     const bound = bindWebMcp();
     setReady(true);
     if (typeof console !== "undefined") {

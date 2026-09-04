@@ -10,8 +10,10 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "deploy": "npm run build && node scripts/patch-wrangler.mjs && wrangler deploy --config .output/server/wrangler.json",
-    "e2e": "node tests/e2e.mjs"
+    "deploy": "npm run typecheck && npm run build && node scripts/patch-wrangler.mjs && wrangler deploy --config .output/server/wrangler.json",
+    "e2e": "node tests/e2e.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "warm": "node scripts/warm.mjs"
   },
   "overrides": {
     "rolldown": "1.2.1"

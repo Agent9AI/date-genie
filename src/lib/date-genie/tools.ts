@@ -482,6 +482,9 @@ export function buildTools(): DateGenieTool[] {
         const parsed = understood.constraints;
         store.set({ understanding: understood });
         await store.search(parsed);
+        // The fast sources have answered by now. Give Google Maps a few seconds
+        // to improve the answer before reporting, since the agent gets one shot.
+        await store.awaitEnrichment();
 
         const s = store.getState();
         if (!s.plan) {

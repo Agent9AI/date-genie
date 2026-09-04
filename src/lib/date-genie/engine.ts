@@ -394,6 +394,9 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
           continue;
         }
 
+        // A venue whose rating and price came from Google Maps is worth more
+        // than one whose numbers this app derived from a hash. Prefer knowing.
+        const realDataBonus = (r.provenance?.realPricing ? 1.1 : 0) + (e.provenance?.realPricing ? 0.7 : 0);
         // A national chain is a fine dinner and a poor date. Only surface one
         // when the human asked for cheap, or nothing independent fits.
         const chainPenalty = r.tags.includes("chain") ? 1.4 : 0;
@@ -424,6 +427,7 @@ export function planDateNight(c: Constraints, pool: CandidatePool): PlanResult {
         // computed from real coordinates.
         const score =
           parkingBonus +
+          realDataBonus +
           r.rating * 0.7 +
           interestBoost +
           cuisineBoost +

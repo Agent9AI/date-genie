@@ -23,6 +23,13 @@ export function setHome(at: LatLng): void {
   HOME.lng = at.lng;
 }
 
+/** Where a field came from, so the UI can be honest field by field. */
+export type Provenance = {
+  source: "openstreetmap" | "google-maps";
+  /** True when rating and price are real rather than derived from an id. */
+  realPricing: boolean;
+};
+
 export type Restaurant = {
   id: string;
   name: string;
@@ -36,6 +43,7 @@ export type Restaurant = {
   noise: "quiet" | "moderate" | "loud";
   tags: string[];
   glyph: string;
+  provenance?: Provenance;
 };
 
 export type EventItem = {
@@ -51,6 +59,7 @@ export type EventItem = {
   seatsLeft: number;
   blurb: string;
   glyph: string;
+  provenance?: Provenance;
 };
 
 export type ParkingSpot = {

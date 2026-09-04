@@ -19,6 +19,8 @@ export type Env = {
   YELP_API_KEY?: string;
   TICKETMASTER_API_KEY?: string;
   FOURSQUARE_API_KEY?: string;
+  /** Gemini, used for Google Maps grounded place data. */
+  GEMINI_API_KEY?: string;
   /** Workers AI binding. Present in production, absent in plain `vite dev`. */
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
 };
@@ -142,12 +144,14 @@ const OVERPASS_MIRRORS = [
   "https://overpass.kumi.systems/api/interpreter",
 ];
 
-const json = (body: unknown, status = 200, cacheSeconds = 0) =>
+/** `cacheable: false` marks a response the edge cache must not keep. */
+const json = (body: unknown, status = 200, cacheSeconds = 0, cacheable = true) =>
   new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
+      ...(cacheable ? {} : { "x-dg-cacheable": "no" }),
       ...(cacheSeconds
         ? { "cache-control": `public, max-age=${cacheSeconds}` }
         : { "cache-control": "no-store" }),
@@ -171,22 +175,40 @@ async function cached(
     return copy;
   }
   const fresh = await produce();
-  if (fresh.ok) {
+  // Never cache a failure. This overrode the producer's own short TTL, so one
+  // transient Overpass timeout got stored as "no cinemas in Washington DC" for
+  // half an hour. Empty is a result; unavailable is not.
+  const cacheable = fresh.ok && fresh.headers.get("x-dg-cacheable") !== "no";
+  if (cacheable) {
     const store = fresh.clone();
     store.headers.set("cache-control", `public, max-age=${ttl}`);
     await cache.put(key, store);
   }
-  fresh.headers.set("x-dg-cache", "miss");
+  fresh.headers.set("x-dg-cache", cacheable ? "miss" : "bypass");
   return fresh;
 }
 
 /* ----------------------------------------------------------- overpass ---- */
 
+/** Stable per-query offset, so different queries start at different mirrors. */
+function mirrorOrder(query: string): string[] {
+  let h = 2166136261;
+  for (let i = 0; i < query.length; i++) h = Math.imul(h ^ query.charCodeAt(i), 16777619);
+  const start = (h >>> 0) % OVERPASS_MIRRORS.length;
+  return [...OVERPASS_MIRRORS.slice(start), ...OVERPASS_MIRRORS.slice(0, start)];
+}
+
 async function overpass(query: string): Promise<unknown | null> {
   // A whole-chain deadline, not three chances to be slow in sequence. A search
   // nobody waits for is a search that failed.
-  const deadline = Date.now() + 9000;
-  for (const host of OVERPASS_MIRRORS) {
+  //
+  // The public Overpass instances allow two concurrent slots per client, and a
+  // single search fires three or four queries at once. Sending them all to the
+  // same host meant the biggest one (restaurants in a dense city) lost the race
+  // and came back empty. Starting each query at a different mirror spreads one
+  // search across the pool instead of queueing it behind itself.
+  const deadline = Date.now() + 14000;
+  for (const host of mirrorOrder(query)) {
     const remaining = deadline - Date.now();
     if (remaining < 1200) break;
     try {
@@ -194,7 +216,7 @@ async function overpass(query: string): Promise<unknown | null> {
         method: "POST",
         body: new URLSearchParams({ data: query }),
         headers: { "user-agent": "date-genie/1.0 (https://date-genie.agent9.dev)" },
-        signal: AbortSignal.timeout(Math.min(6000, remaining)),
+        signal: AbortSignal.timeout(Math.min(7500, remaining)),
       });
       if (!res.ok) continue;
       const body = (await res.json()) as { elements?: unknown[] };
@@ -226,7 +248,7 @@ async function yelpSearch(env: Env, params: URLSearchParams): Promise<Response> 
     if (v) url.searchParams.set(k, v);
   }
   const res = await fetch(url, { headers: { Authorization: `Bearer ${env.YELP_API_KEY}` } });
-  if (!res.ok) return json({ unavailable: `yelp_${res.status}`, businesses: [] }, 200, 30);
+  if (!res.ok) return json({ unavailable: `yelp_${res.status}`, businesses: [] }, 200, 0, false);
   return json(await res.json(), 200, 900);
 }
 
@@ -248,7 +270,7 @@ async function ticketmasterSearch(env: Env, params: URLSearchParams): Promise<Re
     if (v) url.searchParams.set(k, v);
   }
   const res = await fetch(url);
-  if (!res.ok) return json({ unavailable: `ticketmaster_${res.status}`, events: [] }, 200, 30);
+  if (!res.ok) return json({ unavailable: `ticketmaster_${res.status}`, events: [] }, 200, 0, false);
   return json(await res.json(), 200, 900);
 }
 
@@ -272,8 +294,92 @@ async function foursquareSearch(env: Env, params: URLSearchParams): Promise<Resp
   const res = await fetch(url, {
     headers: { Authorization: env.FOURSQUARE_API_KEY, Accept: "application/json" },
   });
-  if (!res.ok) return json({ unavailable: `foursquare_${res.status}`, results: [] }, 200, 30);
+  if (!res.ok) return json({ unavailable: `foursquare_${res.status}`, results: [] }, 200, 0, false);
   return json(await res.json(), 200, 900);
+}
+
+/* ------------------------------------------------- google maps places ---- */
+
+/**
+ * Real place data, grounded in Google Maps.
+ *
+ * This is the endpoint that stops the app lying about numbers. OpenStreetMap
+ * gives us breadth and exact coordinates for free, but it carries no prices, no
+ * ratings and no sense of whether somewhere is pleasant. Gemini with the
+ * google_maps tool returns the real rating, the real review count and a real
+ * price band, because it is reading Maps rather than inventing.
+ *
+ * The model is still fenced in: it retrieves and structures, it does not choose
+ * the evening. Selection and arithmetic stay in the deterministic planner.
+ */
+/**
+ * Model choice is a latency decision, not a quality one.
+ *
+ * Measured against the same Maps-grounded prompt: gemini-3.5-flash 42s,
+ * gemini-3.8-flash 28s, gemini-2.5-flash 21s, gemini-3.1-flash-lite 3.8s.
+ * The big models return marginally richer prose and blow the Worker's time
+ * budget doing it. The data we want (name, rating, price band) comes from Maps
+ * either way, so take the fast one.
+ */
+const PLACES_MODEL = "gemini-3.1-flash-lite";
+
+const placesPrompt = (lat: number, lng: number, kind: string, want: string) =>
+  kind === "events"
+    ? `Find up to 12 real venues near latitude ${lat}, longitude ${lng} where someone could spend an evening out: cinemas, theatres, live music venues, comedy clubs, or arts centres.${
+        want ? ` Prefer: ${want}.` : ""
+      }
+For EACH return a JSON object with keys: name, category (one of film, theater, music, comedy, class), rating (number), reviews (number), approxTicket (number, typical USD ticket price, 0 if free), address, lat (number), lng (number), blurb (under 12 words, what it is actually like).
+Reply with ONLY a JSON array. No prose, no markdown fence.`
+    : `Find up to 14 real restaurants near latitude ${lat}, longitude ${lng} that are good for an evening out.${
+        want ? ` Prefer: ${want}.` : ""
+      }
+For EACH return a JSON object with keys: name, rating (number), reviews (number), approxPerPerson (number, realistic USD spend per person including drinks), cuisine (one lowercase word), address, lat (number), lng (number), romantic (true or false), noise (quiet, moderate or loud), chain (true or false), vibe (under 10 words).
+Reply with ONLY a JSON array. No prose, no markdown fence.`;
+
+async function googlePlaces(env: Env, params: URLSearchParams): Promise<Response> {
+  try {
+    return await groundedPlaces(env, params);
+  } catch (error) {
+    // A slow or failed enrichment must never take the search down with it.
+    return json({ unavailable: error instanceof Error ? error.name : "failed", places: [] }, 200, 0, false);
+  }
+}
+
+async function groundedPlaces(env: Env, params: URLSearchParams): Promise<Response> {
+  if (!env.GEMINI_API_KEY) return json({ unavailable: "no_key", places: [] }, 200, 60);
+  const lat = Number(params.get("lat"));
+  const lng = Number(params.get("lng"));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return json({ error: "lat and lng required" }, 400);
+  const kind = params.get("kind") === "events" ? "events" : "restaurants";
+  const want = (params.get("want") ?? "").slice(0, 120);
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${PLACES_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: placesPrompt(lat, lng, kind, want) }] }],
+        tools: [{ google_maps: {} }],
+        generationConfig: { temperature: 0.2 },
+      }),
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!res.ok) return json({ unavailable: `gemini_${res.status}`, places: [] }, 200, 0, false);
+
+  const body = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] }; groundingMetadata?: unknown }[];
+  };
+  const text = (body.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+  const match = /\[[\s\S]*\]/.exec(text);
+  if (!match) return json({ unavailable: "unparseable", places: [] }, 200, 0, false);
+  try {
+    const places = JSON.parse(match[0]) as unknown[];
+    return json({ places, grounded: true, model: PLACES_MODEL }, 200, 3600);
+  } catch {
+    return json({ unavailable: "unparseable", places: [] }, 200, 0, false);
+  }
 }
 
 /* -------------------------------------------------------------- router ---- */
@@ -328,6 +434,14 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
           {
             sources: [
               {
+                id: "gmaps",
+                label: "Google Maps via Gemini grounding",
+                kind: "api-adapter",
+                available: Boolean(env.GEMINI_API_KEY),
+                needsKey: true,
+                provides: ["real ratings", "real prices", "venue judgement"],
+              },
+              {
                 id: "osm",
                 label: "OpenStreetMap",
                 kind: "api-adapter",
@@ -380,7 +494,7 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
           const body = await overpass(query);
           return body
             ? json(body, 200, 1800)
-            : json({ elements: [], unavailable: "overpass_unreachable" }, 200, 30);
+            : json({ elements: [], unavailable: "overpass_unreachable" }, 200, 0, false);
         });
       }
 
@@ -397,10 +511,15 @@ export async function handleApi(request: Request, passedEnv: Env): Promise<Respo
               },
             },
           );
-          if (!res.ok) return json({ results: [] }, 200, 60);
+          if (!res.ok) return json({ results: [] }, 200, 0, false);
           return json({ results: await res.json() }, 200, 86400);
         });
       }
+
+      case "/api/places":
+        // An hour of edge cache: real ratings do not move minute to minute, and
+        // one grounded lookup per area serves everyone who searches it.
+        return cached(request, 3600, () => googlePlaces(env, url.searchParams));
 
       case "/api/yelp":
         return cached(request, 900, () => yelpSearch(env, url.searchParams));

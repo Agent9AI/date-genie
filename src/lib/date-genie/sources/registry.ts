@@ -12,11 +12,16 @@
  * thing this project can do about that, and it makes the gap legible instead of
  * hiding it behind a demo that pretends the ecosystem already exists.
  */
+import { gmapsAdapter } from "./gmaps";
 import { osmAdapter } from "./osm";
 import type { SourceAdapter } from "./types";
 
-/** Providers we can call today. */
-export const ACTIVE_ADAPTERS: SourceAdapter[] = [osmAdapter];
+/**
+ * Providers we can call today. Order matters: when two sources return the same
+ * venue, the earlier one wins the merge, so the source with real ratings and
+ * real prices is listed first.
+ */
+export const ACTIVE_ADAPTERS: SourceAdapter[] = [gmapsAdapter, osmAdapter];
 
 /**
  * Providers we would compose the moment they expose tools, with the contract.
@@ -84,7 +89,13 @@ export async function refreshKeyedAvailability(): Promise<Record<string, boolean
     const res = await fetch("/api/sources", { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return {};
     const body = (await res.json()) as { sources?: { id: string; available: boolean }[] };
-    return Object.fromEntries((body.sources ?? []).map((s) => [s.id, s.available]));
+    const map = Object.fromEntries((body.sources ?? []).map((s) => [s.id, s.available]));
+    // The client cannot see a key, so the Worker is the only honest authority
+    // on whether a keyed adapter can actually be used.
+    for (const adapter of ACTIVE_ADAPTERS) {
+      if (adapter.needsKey) adapter.available = map[adapter.id] === true;
+    }
+    return map;
   } catch {
     return {};
   }

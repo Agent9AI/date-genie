@@ -28,7 +28,7 @@ import {
 } from "./engine";
 import { setHome } from "./data";
 import { geocode, locateMe, reverseGeocode, type Place } from "./sources/geocode";
-import { searchWithWidening } from "./sources/search";
+import { enrich, richSourcesAvailable, searchWithWidening } from "./sources/search";
 import type { Understanding } from "./understand";
 import type { CandidatePool } from "./sources/types";
 
@@ -79,6 +79,8 @@ export type State = {
   vetoes: string[];
   webmcp: { bound: boolean; surface: string; tools: string[]; agentSeen: boolean };
   searching: boolean;
+  /** True while the slower, higher quality sources are still coming in. */
+  enriching: boolean;
   /** Set when a search ran and could not produce an evening. Shown verbatim. */
   notice: string | null;
   narration: string[];
@@ -126,6 +128,7 @@ let state: State = {
   vetoes: [],
   webmcp: { bound: false, surface: "none", tools: [], agentSeen: false },
   searching: false,
+  enriching: false,
   notice: null,
   narration: [],
   demoRunning: false,
@@ -199,7 +202,9 @@ export function patchCall(id: string, patch: Partial<ToolCall>) {
 
 export async function setPlace(
   query: string,
+  opts: { runSearch?: boolean } = {},
 ): Promise<{ ok: boolean; place?: Place; error?: string }> {
+  const { runSearch = true } = opts;
   set({ searching: true, notice: null });
   const place = await geocode(query);
   if (!place) {
@@ -210,8 +215,8 @@ export async function setPlace(
     };
   }
   setHome(place.at);
-  set({ place, pool: null });
-  await search();
+  set({ place, pool: null, ...(runSearch ? {} : { searching: false }) });
+  if (runSearch) await search();
   return { ok: true, place };
 }
 
@@ -250,7 +255,7 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
   const cuisine = cuisineInterests(merged)[0];
   const activity = activityInterests(merged)[0];
 
-  const pool = await searchWithWidening({
+  let pool = await searchWithWidening({
     at: place.at,
     radiusKm: 4,
     restaurants: {
@@ -271,6 +276,28 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
     set({ notice: `To find anything at all I had to drop ${pool.dropped.join("; and ")}.` });
   }
 
+  // Overpass is a free shared service and it sheds load. When it comes back
+  // empty, Google Maps is not a nice-to-have any more, it is the answer, so
+  // wait for it before telling anyone there is nothing here.
+  if (pool.restaurants.length < 8 && richSourcesAvailable()) {
+    const rescued = await enrich(pool, {
+      at: place.at,
+      radiusKm: 4,
+      restaurants: {
+        ...(cuisine ? { cuisine } : {}),
+        dietary: merged.dietary,
+        avoid: merged.avoid,
+        earliest: merged.earliest,
+        party: merged.party,
+        targetPerPerson: Math.max(12, Math.round((merged.budget * merged.spendTarget * 0.62) / Math.max(1, merged.party))),
+        ...(merged.spendTarget >= 0.8 ? { occasion: "special occasion" } : {}),
+        ...(merged.noisePreference === "quiet" ? { quiet: true } : {}),
+      },
+      events: { ...(activity ? { category: activity } : {}), earliest: merged.earliest, latestEnd: merged.latestEnd },
+    });
+    if (rescued.restaurants.length > pool.restaurants.length) pool = rescued;
+  }
+
   if (!pool.restaurants.length) {
     set({
       searching: false,
@@ -278,15 +305,17 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
       plan: null,
       alternates: [],
       checks: [],
-      notice: `No restaurants came back for ${place.label}${
-        cuisine ? ` matching "${cuisine}"` : ""
-      }. The sources may be rate limited. Try again, or name a nearby larger town.`,
+      notice: `No restaurants came back for ${place.label}. Every source came up empty, which usually means the free OpenStreetMap service is shedding load. Try again in a moment.`,
       revision: state.revision + 1,
     });
     return;
   }
 
   applyPlan(merged, pool);
+
+  // The page now has an answer. Go and get the real ratings and prices, then
+  // improve it in place rather than making anyone wait for perfection.
+  enrichmentInFlight = enrichCurrent(merged, { at: place.at, radiusKm: 4, cuisine, activity });
 
   // Still nothing bookable, and we were filtering on what they asked for? The
   // filters are the likeliest culprit, so try once without them and be honest
@@ -334,6 +363,59 @@ export async function search(c: Constraints = state.constraints): Promise<void> 
         }
       }
     }
+  }
+}
+
+let enrichmentInFlight: Promise<void> | null = null;
+
+/**
+ * Wait for the richer sources, but not forever. A person watching the page gets
+ * the improvement whenever it lands; an agent that asked a question needs an
+ * answer now, so it waits a beat and then reports what it has.
+ */
+export async function awaitEnrichment(maxMs = 6000): Promise<void> {
+  if (!enrichmentInFlight) return;
+  await Promise.race([enrichmentInFlight, new Promise((r) => setTimeout(r, maxMs))]);
+}
+
+/**
+ * Second pass. Runs after a plan is already on screen, and only replaces it if
+ * the richer sources actually returned something.
+ */
+async function enrichCurrent(
+  c: Constraints,
+  ctx: { at: { lat: number; lng: number }; radiusKm: number; cuisine?: string | undefined; activity?: string | undefined },
+): Promise<void> {
+  const basePool = getState().pool;
+  if (!basePool) return;
+  set({ enriching: true });
+  try {
+    const better = await enrich(basePool as never, {
+      at: ctx.at,
+      radiusKm: ctx.radiusKm,
+      restaurants: {
+        ...(ctx.cuisine ? { cuisine: ctx.cuisine } : {}),
+        dietary: c.dietary,
+        avoid: c.avoid,
+        earliest: c.earliest,
+        party: c.party,
+        // What a good answer should cost per head, so the rich source returns
+        // the right kind of place instead of the cheapest thing nearby.
+        targetPerPerson: Math.max(12, Math.round((c.budget * c.spendTarget * 0.62) / Math.max(1, c.party))),
+        ...(c.spendTarget >= 0.8 ? { occasion: "special occasion" } : {}),
+        ...(c.noisePreference === "quiet" ? { quiet: true } : {}),
+      },
+      events: { ...(ctx.activity ? { category: ctx.activity } : {}), earliest: c.earliest, latestEnd: c.latestEnd },
+    });
+    // Only disturb the screen if the enrichment genuinely added something, and
+    // never once a human has approved or booked.
+    const s = getState();
+    if (s.approval.status !== "idle" || s.booking) return;
+    if (better.restaurants.length > (basePool.restaurants.length ?? 0) || better.events.length > (basePool.events.length ?? 0)) {
+      applyPlan(getState().constraints, better as never);
+    }
+  } finally {
+    set({ enriching: false });
   }
 }
 

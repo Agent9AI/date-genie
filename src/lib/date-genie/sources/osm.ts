@@ -32,9 +32,9 @@ function bbox(at: LatLng, km: number): string {
 /** Escape a user-supplied term before it lands inside an Overpass regex. */
 const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "");
 
-async function overpass(query: string, timeoutMs = 11000): Promise<OsmElement[]> {
+async function overpass(query: string, timeoutMs = 16000): Promise<OsmElement[]> {
   try {
-    const res = await fetch(`/api/osm?q=${encodeURIComponent(query)}`, {
+    const res = await fetch(`/api/osm?v=2&q=${encodeURIComponent(query)}`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return [];

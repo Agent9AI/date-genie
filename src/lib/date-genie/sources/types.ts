@@ -24,6 +24,15 @@ export type RestaurantQuery = SearchArea & {
   earliest?: string;
   avoid?: string[];
   party?: number;
+  /**
+   * Roughly what a good answer should cost per person. Sources that understand
+   * language can use this to return the right KIND of place, rather than
+   * returning everything and making the planner discard most of it.
+   */
+  targetPerPerson?: number;
+  /** anniversary, birthday, first date. Shapes what "good" means here. */
+  occasion?: string;
+  quiet?: boolean;
 };
 
 export type EventQuery = SearchArea & {

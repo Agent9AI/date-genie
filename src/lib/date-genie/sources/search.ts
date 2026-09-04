@@ -73,7 +73,7 @@ const ENOUGH = 6;
  * One round of fan-out. Every adapter, every category, and the relaxed variant
  * of the restaurant query, all in flight together.
  */
-async function round(input: SearchInput): Promise<SearchOutcome> {
+async function round(input: SearchInput, adapters = ACTIVE_ADAPTERS.filter((a) => a.available)): Promise<SearchOutcome> {
   const area = { at: input.at, radiusKm: input.radiusKm };
   const reports: SourceReport[] = [];
   const dropped: string[] = [];
@@ -85,7 +85,7 @@ async function round(input: SearchInput): Promise<SearchOutcome> {
   const hasCategory = Boolean(input.events.category);
 
   await Promise.all(
-    ACTIVE_ADAPTERS.filter((a) => a.available).map(async (adapter) => {
+    adapters.map(async (adapter) => {
       const started = performance.now();
       const searchR = adapter.searchRestaurants;
       const searchE = adapter.searchEvents;
@@ -146,6 +146,39 @@ async function round(input: SearchInput): Promise<SearchOutcome> {
   };
 }
 
+/** Sources that answer in about a second and give breadth. */
+const fastAdapters = () => ACTIVE_ADAPTERS.filter((a) => a.available && !a.needsKey);
+/** Sources worth waiting a few seconds for, because they carry real numbers. */
+const richAdapters = () => ACTIVE_ADAPTERS.filter((a) => a.available && a.needsKey);
+
+/** Whether waiting for the slow sources is worth it at all. */
+export const richSourcesAvailable = () => richAdapters().length > 0;
+
+/**
+ * Enrich a pool with the slower, higher-quality sources.
+ *
+ * Kept separate from the main search on purpose. Google Maps knows the real
+ * rating and the real price of a place, and takes about four seconds to say so.
+ * Blocking every search on that made a two second plan into an eighteen second
+ * one. So the fast sources answer first and the page fills in, then this runs
+ * and the plan improves in place, which is also a rather good demonstration of
+ * what a shared human-and-agent surface looks like.
+ */
+export async function enrich(pool: SearchOutcome, input: SearchInput): Promise<SearchOutcome> {
+  const rich = richAdapters();
+  if (!rich.length) return pool;
+  const extra = await round(input, rich);
+  if (!extra.restaurants.length && !extra.events.length) return pool;
+  return {
+    ...pool,
+    // Rich sources go first so the dedupe keeps their real pricing.
+    restaurants: dedupe([...extra.restaurants, ...pool.restaurants]),
+    events: dedupe([...extra.events, ...pool.events]),
+    parking: pool.parking.length ? pool.parking : extra.parking,
+    reports: [...extra.reports, ...pool.reports],
+  };
+}
+
 /**
  * Search once, then widen only what was actually thin.
  *
@@ -155,13 +188,13 @@ async function round(input: SearchInput): Promise<SearchOutcome> {
  * search and a 6 second one.
  */
 export async function searchWithWidening(input: SearchInput): Promise<SearchOutcome> {
-  const first = await round(input);
+  const first = await round(input, fastAdapters());
   const needRestaurants = first.restaurants.length < ENOUGH;
   const needEvents = first.events.length < 2;
   if (!needRestaurants && !needEvents) return first;
 
   const wide = { at: input.at, radiusKm: input.radiusKm * 3 };
-  const adapters = ACTIVE_ADAPTERS.filter((a) => a.available);
+  const adapters = fastAdapters();
 
   const [moreRestaurants, moreEvents, moreParking] = await Promise.all([
     needRestaurants
